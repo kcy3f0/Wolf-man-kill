@@ -685,8 +685,6 @@ async def request_last_words(channel: discord.TextChannel, game: GameState, play
                     retry_callback=create_retry_callback(channel)
                 )
                 content = msg
-                # 模擬輸入延遲
-                await asyncio.sleep(random.uniform(3, 6))
         else:
             # Human Logic
             def check(m):
