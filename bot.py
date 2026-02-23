@@ -49,6 +49,9 @@ class WerewolfBot(commands.Bot):
         super().__init__(command_prefix='!', intents=intents, help_command=None)
 
     async def setup_hook(self):
+        # Initialize AI Manager cache asynchronously
+        await ai_manager.load_cache()
+
         # 注意: 全域同步可能需要一小時才能生效。開發時建議同步到特定 Guild。
         await self.tree.sync()
         logger.info("Slash commands synced globally.")
