@@ -521,7 +521,7 @@ async def start_next_turn(channel: discord.TextChannel, game: GameState):
     await channel.send(f"🎙️ 輪到 **{pid} 號 {next_player.mention}** 發言。 (剩餘 {remaining_count} 人等待)\n請發言完畢後輸入 `/done` 結束回合。")
 
     if hasattr(next_player, 'bot') and next_player.bot:
-        await asyncio.sleep(random.uniform(2, 5))
+        await asyncio.sleep(random.uniform(0.5, 1.5))
 
         current_history = []
         day_count = 0
@@ -541,7 +541,7 @@ async def start_next_turn(channel: discord.TextChannel, game: GameState):
             game.speech_history.append(f"{next_player.name}: {speech}")
 
         await channel.send(f"🗣️ **{next_player.name}**: {speech}")
-        await asyncio.sleep(random.uniform(2, 4))
+        await asyncio.sleep(random.uniform(0.5, 1.5))
 
         await channel.send(f"*(AI {next_player.name} 發言結束)*")
         await set_player_mute(next_player, True)
