@@ -1,6 +1,67 @@
+import sys
 import asyncio
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+import unittest
+from unittest.mock import MagicMock, AsyncMock, patch
+
+# --- Setup Global Mocks for Missing Dependencies ---
+discord = MagicMock()
+discord.Intents = MagicMock()
+discord.ext = MagicMock()
+discord.ext.commands = MagicMock()
+discord.app_commands = MagicMock()
+discord.Interaction = MagicMock()
+
+# Mock the Bot class NOT as a MagicMock subclass to avoid initialization issues
+class MockBot:
+    def __init__(self, *args, **kwargs):
+        self.tree = MagicMock()
+
+        # Decorator that returns a Mock object with .callback pointing to the original function
+        def command_decorator(*d_args, **d_kwargs):
+            def wrapper(func):
+                # We return a mock that acts like the Command object
+                # and has the .callback attribute
+                cmd_mock = MagicMock()
+                cmd_mock.callback = func
+                return cmd_mock
+            return wrapper
+
+        self.tree.command = MagicMock(side_effect=command_decorator)
+        self.tree.sync = AsyncMock()
+
+        self.user = MagicMock()
+        self.user.__str__ = lambda x: "MockBot"
+
+        # .event decorator
+        self.event = MagicMock(side_effect=lambda func: func)
+
+    async def setup_hook(self):
+        pass
+
+    async def close(self):
+        pass
+
+    def run(self, *args, **kwargs):
+        pass
+
+    async def process_commands(self, *args, **kwargs):
+        pass
+
+    async def wait_for(self, *args, **kwargs):
+        return MagicMock()
+
+discord.ext.commands.Bot = MockBot
+
+sys.modules["discord"] = discord
+sys.modules["discord.ext"] = discord.ext
+sys.modules["discord.ext.commands"] = discord.ext.commands
+sys.modules["discord.app_commands"] = discord.app_commands
+sys.modules["dotenv"] = MagicMock()
+sys.modules["aiohttp"] = MagicMock()
+sys.modules["google"] = MagicMock()
+sys.modules["google.generativeai"] = MagicMock()
+
+# Now import bot
 import bot
 
 # Mock Discord Context
@@ -21,118 +82,115 @@ class MockContext:
         self.channel.send = AsyncMock()
         self.channel.set_permissions = AsyncMock()
         self.channel.guild = MagicMock()
+        # Mock followup for slash commands sometimes used
+        self.followup = MagicMock()
+        self.followup.send = AsyncMock()
 
-@pytest.mark.asyncio
-async def test_join_concurrency():
-    # Reset game
-    guild_id = 123
-    game = bot.get_game(guild_id)
-    game.reset()
+class TestBotSecurity(unittest.IsolatedAsyncioTestCase):
+    async def test_join_concurrency(self):
+        # Reset game
+        guild_id = 123
+        game = bot.get_game(guild_id)
+        game.reset()
 
-    # Simulate 30 users joining concurrently
-    users = [MockContext(i, guild_id) for i in range(30)]
+        # Simulate 30 users joining concurrently
+        users = [MockContext(i, guild_id) for i in range(30)]
 
-    # Directly calling the callback function of the command
-    tasks = [bot.join.callback(ctx) for ctx in users]
-    await asyncio.gather(*tasks)
+        # Directly calling the callback function of the command
+        tasks = [bot.join.callback(ctx) for ctx in users]
+        await asyncio.gather(*tasks)
 
-    print(f"Players joined: {len(game.players)}")
-    assert len(game.players) <= 20
-    assert len(game.players) == 20 # Should fill up to 20
+        print(f"Players joined: {len(game.players)}")
+        self.assertLessEqual(len(game.players), 20)
+        self.assertEqual(len(game.players), 20) # Should fill up to 20
 
-@pytest.mark.asyncio
-async def test_vote_input_validation():
-    guild_id = 456
-    game = bot.get_game(guild_id)
-    game.reset()
-    game.game_active = True
+    async def test_vote_input_validation(self):
+        guild_id = 456
+        game = bot.get_game(guild_id)
+        game.reset()
+        game.game_active = True
+        # Ensure vote can proceed (not speaking active)
+        game.speaking_active = False
 
-    p1 = MagicMock()
-    p1.id = 1
-    p1.name = "P1"
-    game.players = [p1]
-    game.player_ids = {1: p1}
+        p1 = MagicMock()
+        p1.id = 1
+        p1.name = "P1"
+        game.players = [p1]
+        game.player_ids = {1: p1}
+        # Ensure user hasn't voted yet
+        game.voted_players = set()
+        game.votes = {}
 
-    ctx = MockContext(1, guild_id)
-    ctx.user = p1
-    ctx.author = p1
+        ctx = MockContext(1, guild_id)
+        ctx.user = p1
+        ctx.author = p1
 
-    # Test long input
-    long_str = "a" * 200
-    # Current bot code does NOT seem to validate length in vote() command explicitly,
-    # relying on Discord interaction limits maybe?
-    # Or maybe I missed it in bot.py?
-    # Let's read bot.py's vote command again.
-    # It does: is_abstain = (target_id.strip().lower() == "no")
-    # if target_id.isdigit(): ...
-    # It does NOT check length.
+        # Test long input
+        long_str = "a" * 200
 
-    # The original test expected "輸入過長".
-    # This implies there was validation logic that might have been removed or I missed it.
-    # I read bot.py. There is no length check in vote command.
-    # However, request_dm_input has length check > 100.
-    # But vote is a slash command.
+        # Run the callback
+        await bot.vote.callback(ctx, target_id=long_str)
 
-    # So this test is testing non-existent logic. I'll comment it out or adapt it.
-    # But wait, I'm verifying my changes. I shouldn't be "fixing" tests by removing them unless they are clearly obsolete.
-    # The test failed because ctx.send was not called.
-    # If the bot didn't reply with error, maybe it replied with "無效的玩家編號" (if not digit) or something else.
-    # But "a" * 200 is not digit.
+        # Check response
+        # Verify that send_message was called with the error message
+        ctx.response.send_message.assert_called_once()
+        args, _ = ctx.response.send_message.call_args
+        self.assertIn("輸入過長", args[0])
 
-    await bot.vote.callback(ctx, target_id=long_str)
+    async def test_die_permission_bypass(self):
+        guild_id = 789
+        game = bot.get_game(guild_id)
+        game.reset()
 
-    # Check response
-    # args, _ = ctx.response.send_message.call_args
-    # assert "輸入過長" in args[0]
+        # Creator
+        creator = MagicMock()
+        creator.id = 1
+        creator.guild_permissions.administrator = False
+        creator.mention = "<@1>"
 
-    # Since I don't see length check in vote(), this test is doomed to fail if it expects specific error.
-    # I will skip assertions on specific message for now, just ensure it doesn't crash.
-    pass
+        # Random User
+        user = MagicMock()
+        user.id = 2
+        user.guild_permissions.administrator = False
+        user.mention = "<@2>"
 
-@pytest.mark.asyncio
-async def test_die_permission_bypass():
-    guild_id = 789
-    game = bot.get_game(guild_id)
-    game.reset()
+        # Admin
+        admin = MagicMock()
+        admin.id = 3
+        admin.guild_permissions.administrator = True
+        admin.mention = "<@3>"
 
-    # Creator
-    creator = MagicMock()
-    creator.id = 1
-    creator.guild_permissions.administrator = False
+        game.creator = creator
+        game.game_active = True
 
-    # Random User
-    user = MagicMock()
-    user.id = 2
-    user.guild_permissions.administrator = False
+        # Case 1: Random user tries to use !die
+        ctx = MockContext(2, guild_id)
+        ctx.user = user
+        ctx.author = user
 
-    # Admin
-    admin = MagicMock()
-    admin.id = 3
-    admin.guild_permissions.administrator = True
+        await bot.die.callback(ctx, target="1")
 
-    game.creator = creator
-    game.game_active = True
+        args, _ = ctx.response.send_message.call_args
+        self.assertIn("權限不足", args[0])
 
-    # Case 1: Random user tries to use !die
-    ctx = MockContext(2, guild_id)
-    ctx.user = user
-    ctx.author = user
+        # Case 2: Creator uses !die
+        # Setup players for this case
+        game.players = [user]
+        game.player_ids = {2: user}
 
-    await bot.die.callback(ctx, target="1")
+        ctx = MockContext(1, guild_id)
+        ctx.user = creator
+        ctx.author = creator
 
-    args, _ = ctx.response.send_message.call_args
-    assert "權限不足" in args[0]
+        # Call die on target "2"
+        await bot.die.callback(ctx, target="2")
 
-    # Case 2: Creator uses !die
-    # Need to mock MemberConverter or setup players
-    game.players = [user] # User 2 is target
-    game.player_ids = {2: user}
+        # Should succeed (game.players empty after die?)
+        self.assertNotIn(user, game.players)
 
-    ctx = MockContext(1, guild_id)
-    ctx.user = creator
-    ctx.author = creator
+        # Check success message
+        args, _ = ctx.response.send_message.call_args
+        self.assertIn("已死亡", args[0])
 
-    await bot.die.callback(ctx, target="2")
-
-    # Should succeed (game.players empty after die?)
-    assert user not in game.players
+if __name__ == "__main__":
+    unittest.main()
