@@ -29,6 +29,36 @@ ALLOWED_URL_SCHEMES = ('http://', 'https://')
 
 CACHE_FILE = "ai_cache.json"
 
+def _load_and_process_cache(cache_file: str) -> Dict:
+    """
+    Helper function to load and process cache from disk synchronously.
+    Intended to be run in an executor.
+    """
+    if not os.path.exists(cache_file):
+        return {}
+
+    try:
+        with open(cache_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        result = {}
+        for entry in data:
+            # Entry format: {"player_count": 5, "existing_roles": [...], "roles": [...]}
+            if not all(k in entry for k in ("player_count", "existing_roles", "roles")):
+                continue
+
+            player_count = entry["player_count"]
+            existing_roles = tuple(entry["existing_roles"])
+            roles = entry["roles"]
+
+            key = (player_count, existing_roles)
+            result[key] = roles
+        return result
+    except Exception as e:
+        logger.error(f"Failed to load cache from disk: {e}")
+        return {}
+
+
 def _write_cache_to_disk(data: List[Dict], cache_file: str):
     """
     Helper function to write cache to disk synchronously.
@@ -118,29 +148,17 @@ class AIManager:
         self.narrative_cache: OrderedDict = OrderedDict()
         self.role_template_cache: OrderedDict = OrderedDict()
         self.save_lock = asyncio.Lock()
-        self._load_cache()
 
-    def _load_cache(self):
-        if not os.path.exists(CACHE_FILE):
-            return
-
+    async def load_cache(self):
+        """
+        Asynchronously loads the cache from disk using an executor to avoid blocking the event loop.
+        """
+        loop = asyncio.get_running_loop()
         try:
-            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-
-            for entry in data:
-                # Entry format: {"player_count": 5, "existing_roles": [...], "roles": [...]}
-                if not all(k in entry for k in ("player_count", "existing_roles", "roles")):
-                    continue
-
-                player_count = entry["player_count"]
-                existing_roles = tuple(entry["existing_roles"])
-                roles = entry["roles"]
-
-                key = (player_count, existing_roles)
-                self.role_template_cache[key] = roles
-
-            logger.info(f"Loaded {len(self.role_template_cache)} entries from cache.")
+            data = await loop.run_in_executor(None, _load_and_process_cache, CACHE_FILE)
+            if data:
+                self.role_template_cache.update(data)
+                logger.info(f"Loaded {len(self.role_template_cache)} entries from cache.")
         except Exception as e:
             logger.error(f"Failed to load cache: {e}")
 
