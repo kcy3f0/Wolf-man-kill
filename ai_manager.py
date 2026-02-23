@@ -29,6 +29,30 @@ ALLOWED_URL_SCHEMES = ('http://', 'https://')
 
 CACHE_FILE = "ai_cache.json"
 
+def _write_cache_to_disk(data: List[Dict], cache_file: str):
+    """
+    Helper function to write cache to disk synchronously.
+    Intended to be run in an executor.
+    """
+    try:
+        # 原子寫入：先寫入臨時檔再重新命名，防止寫入中斷導致檔案損壞
+        dir_name = os.path.dirname(os.path.abspath(cache_file))
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, cache_file)
+        except Exception:
+            # 清理臨時檔
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+    except Exception as e:
+        logger.error(f"Failed to write cache to disk: {e}")
+        raise
+
 class RateLimitError(Exception):
     """Exception raised when API rate limit is exceeded."""
     pass
@@ -93,6 +117,7 @@ class AIManager:
 
         self.narrative_cache: OrderedDict = OrderedDict()
         self.role_template_cache: OrderedDict = OrderedDict()
+        self.save_lock = asyncio.Lock()
         self._load_cache()
 
     def _load_cache(self):
@@ -119,32 +144,26 @@ class AIManager:
         except Exception as e:
             logger.error(f"Failed to load cache: {e}")
 
-    def _save_cache(self):
-        try:
-            data = []
-            for (player_count, existing_roles), roles in self.role_template_cache.items():
-                data.append({
-                    "player_count": player_count,
-                    "existing_roles": list(existing_roles),
-                    "roles": roles
-                })
-
-            # 原子寫入：先寫入臨時檔再重新命名，防止寫入中斷導致檔案損壞
-            dir_name = os.path.dirname(os.path.abspath(CACHE_FILE))
-            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
+    async def _save_cache(self):
+        """
+        Asynchronously saves the cache to disk using an executor to avoid blocking the event loop.
+        """
+        async with self.save_lock:
             try:
-                with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-                os.replace(tmp_path, CACHE_FILE)
-            except Exception:
-                # 清理臨時檔
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
-        except Exception as e:
-            logger.error(f"Failed to save cache: {e}")
+                # Prepare data synchronously (fast memory operation)
+                data = []
+                for (player_count, existing_roles), roles in self.role_template_cache.items():
+                    data.append({
+                        "player_count": player_count,
+                        "existing_roles": list(existing_roles),
+                        "roles": roles
+                    })
+
+                # Offload blocking I/O to executor
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, _write_cache_to_disk, data, CACHE_FILE)
+            except Exception as e:
+                logger.error(f"Failed to save cache: {e}")
 
     async def get_session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
@@ -347,7 +366,7 @@ class AIManager:
                     self.role_template_cache[cache_key] = roles
                     if len(self.role_template_cache) > 100:
                         self.role_template_cache.popitem(last=False)
-                    self._save_cache()
+                    await self._save_cache()
                     return roles
             if response_text: # Only print invalid if we actually got a response
                 logger.warning(f"Invalid generated roles for {player_count} players: {roles}")
