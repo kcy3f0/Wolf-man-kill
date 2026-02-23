@@ -200,6 +200,10 @@ class AIManager:
 
     async def _generate_with_gemini_cli(self, prompt: str) -> str:
         """Executes gemini-cli via subprocess."""
+        # Optimization: Use direct API if key is available to avoid subprocess overhead
+        if self.gemini_api_key:
+            return await self._generate_with_gemini_api(prompt)
+
         try:
             # Create subprocess: gemini -p "prompt"
             # Using list of arguments avoids shell injection risks
