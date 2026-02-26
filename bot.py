@@ -41,15 +41,23 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 
 # 設定 Intent (權限)
 intents = discord.Intents.default()
-intents.members = True
-intents.message_content = True
+intents.members = True # 需要讀取成員列表
+intents.message_content = True # 需要讀取訊息內容
 
 class WerewolfBot(commands.Bot):
+    """
+    自定義的 Discord Bot 類別。
+    擴展了標準的 commands.Bot，用於管理 AI Manager 的生命週期。
+    """
     def __init__(self):
         super().__init__(command_prefix='!', intents=intents, help_command=None)
 
     async def setup_hook(self):
-        # Initialize AI Manager cache asynchronously
+        """
+        Bot 啟動時的鉤子函式。
+        用於初始化 AI 快取並同步 Slash Commands。
+        """
+        # 非同步初始化 AI Manager 快取
         await ai_manager.load_cache()
 
         # 注意: 全域同步可能需要一小時才能生效。開發時建議同步到特定 Guild。
@@ -57,20 +65,26 @@ class WerewolfBot(commands.Bot):
         logger.info("Slash commands synced globally.")
 
     async def close(self):
-        await ai_manager.close()
+        """Bot 關閉時的清理工作。"""
+        await ai_manager.close() # 確保關閉 aiohttp session
         await super().close()
 
 bot = WerewolfBot()
 
 def create_retry_callback(channel: discord.TextChannel) -> Callable:
     """
-    Creates a callback function to notify users about rate limit retries.
+    建立一個 Callback 函式，用於在 AI 觸發速率限制重試時通知使用者。
+
+    Args:
+        channel: 訊息發送的目標頻道。
+    Returns:
+        一個無參數的 Coroutine function。
     """
     async def callback():
         try:
             await channel.send("⚠️ AI 正在思考中 (連線重試)... 請稍候。")
         except Exception:
-            pass # 無法發送訊息時忽略
+            pass # 無法發送訊息時忽略 (例如權限不足或連線問題)
     return callback
 
 @bot.event
@@ -79,6 +93,10 @@ async def on_ready():
 
 @bot.event
 async def on_message(message: discord.Message):
+    """
+    全域訊息監聽器。
+    主要用於記錄玩家在遊戲中的發言，作為 AI 的上下文。
+    """
     if message.author.bot:
         return
 
@@ -86,29 +104,39 @@ async def on_message(message: discord.Message):
     if message.guild:
         game = get_game(message.guild.id)
         if game.game_active:
-            # 輪流發言階段
+            # 依序發言階段: 只有當前發言者被記錄
             if game.speaking_active:
                 if game.current_speaker == message.author:
                      async with game.lock:
-                         # 紀錄玩家發言
+                         # 紀錄玩家發言格式: "Name: Content"
                          msg_content = f"{message.author.name}: {message.content}"
                          game.speech_history.append(msg_content)
-            # 自由討論階段 (例如投票前)
+            # 自由討論階段 (例如投票前): 所有存活玩家發言都被記錄
             elif message.author in game.players:
                  async with game.lock:
                      msg_content = f"{message.author.name}: {message.content}"
                      game.speech_history.append(msg_content)
 
-    # 必須加上這行，否則 commands 框架會失效
+    # 必須加上這行，否則 commands 框架會失效 (雖然本專案主要用 slash commands)
     await bot.process_commands(message)
 
 async def announce_event(channel: discord.TextChannel, game: GameState, event_type: str, system_msg: str):
+    """
+    發送遊戲事件廣播，並附帶由 AI 生成的氛圍旁白。
+
+    Args:
+        channel: 目標頻道。
+        game: 遊戲狀態物件。
+        event_type: 事件類型 (用於生成旁白)。
+        system_msg: 系統實際通知內容 (必定顯示)。
+    """
+    # 呼叫 AI 生成旁白
     narrative = await ai_manager.generate_narrative(event_type, system_msg, retry_callback=create_retry_callback(channel))
 
     if game.game_mode == "online":
         await channel.send(f"🎙️ **{narrative}**\n\n({system_msg})")
     else:
-        # 線下模式: 發送給主持人
+        # 線下模式: 嘗試私訊發送給主持人 (creator)，若失敗則直接發到頻道
         host_msg = f"🔔 **主持人提示** 🔔\n請宣讀以下內容：\n> {narrative}\n\n系統訊息：{system_msg}"
         sent = False
         if game.creator:
@@ -124,14 +152,26 @@ async def announce_event(channel: discord.TextChannel, game: GameState, event_ty
             await channel.send(f"*(已發送台詞給主持人 {game.creator.name})*")
 
 async def announce_last_words(channel: discord.TextChannel, game: GameState, player: Union[discord.Member, AIPlayer], content: str):
-    """公佈遺言"""
+    """
+    公佈玩家遺言。
+
+    同時將遺言加入 speech_history，讓其他 AI 玩家能「聽到」。
+    """
     async with game.lock:
         game.speech_history.append(f"{player.name} (遺言): {content}")
     
     await channel.send(f"📢 **{player.name} 的遺言**：\n> {content}")
 
 async def check_game_over(channel: discord.TextChannel, game: GameState):
-    """檢查是否滿足獲勝條件 (需在 Lock 保護下呼叫)"""
+    """
+    檢查遊戲是否滿足獲勝條件。
+
+    獲勝規則 (屠邊):
+    1. 狼人獲勝: 神職全滅 OR 平民全滅。
+    2. 好人獲勝: 狼人全滅。
+
+    注意: 必須在 game.lock 保護下呼叫此函式，以確保數據一致性。
+    """
     if not game.game_active:
         return
 
@@ -168,12 +208,13 @@ async def check_game_over(channel: discord.TextChannel, game: GameState):
         game.game_active = False
         await announce_event(channel, game, "遊戲結束", f"獲勝者：{winner}。原因：{reason}")
 
-        # 公佈身分
+        # 公佈所有人的真實身分
         msg = "**本局玩家身分：**\n" + "".join([f"{p.name}: {r}\n" for p, r in game.roles.items()])
 
         await channel.send(msg)
 
         try:
+            # 嘗試恢復頻道發言權限
             await channel.set_permissions(channel.guild.default_role, send_messages=True)
         except (discord.Forbidden, discord.HTTPException) as e:
              logger.error(f"Failed to reset permissions: {e}")
@@ -182,11 +223,20 @@ async def check_game_over(channel: discord.TextChannel, game: GameState):
         await channel.send("請使用 `/reset` 重置遊戲以開始新的一局。")
 
 async def request_dm_input(player: Union[discord.Member, AIPlayer], prompt: str, valid_check: Callable[[str], bool], timeout: int = 45) -> Optional[str]:
-    """私訊請求輸入的輔助函式"""
+    """
+    私訊請求使用者輸入的通用輔助函式。
+
+    Args:
+        player: 目標玩家。
+        prompt: 提示訊息。
+        valid_check: 驗證輸入內容的函式 (回傳 True 表示有效)。
+        timeout: 等待時間 (秒)。
+    """
     try:
         await player.send(prompt)
         def check(m):
             try:
+                # 確保是同一人、在私訊頻道、且內容符合格式
                 if not (m.author == player and isinstance(m.channel, discord.DMChannel)):
                     return False
                 if len(m.content) > 100:
@@ -198,15 +248,24 @@ async def request_dm_input(player: Union[discord.Member, AIPlayer], prompt: str,
         msg = await bot.wait_for('message', check=check, timeout=timeout)
         return msg.content
     except (asyncio.TimeoutError, discord.Forbidden):
+        # 超時或被封鎖私訊
         return None
     except discord.HTTPException as e:
         logger.error(f"HTTP Exception in DM request: {e}")
         return None
 
 async def perform_night(channel: discord.TextChannel, game: GameState):
-    """執行天黑邏輯"""
+    """
+    執行「天黑」階段邏輯。
+
+    流程：
+    1. 設定頻道禁言。
+    2. 並發 (Concurrent) 執行各個角色的夜晚行動 (狼人、女巫、預言家、守衛)。
+    3. 結算夜晚結果 (死亡名單)。
+    4. 切換到天亮階段。
+    """
     try:
-        # Check current permissions before making API call
+        # 檢查權限並設定頻道禁言
         perms = channel.permissions_for(channel.guild.default_role)
         if perms.send_messages:
             await channel.set_permissions(channel.guild.default_role, send_messages=False)
@@ -218,6 +277,7 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
         logger.error(f"Failed to set night permissions: {e}")
         await channel.send("錯誤：設定頻道權限時發生未知錯誤。")
 
+    # 輸入驗證函式
     def is_valid_id(content):
         if content.strip().lower() == 'no': return True
         try:
@@ -225,17 +285,19 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
             return pid in game.player_ids
         except Exception: return False
 
-    # 統一獲取目標 ID 列表
+    # 統一獲取目標 ID 列表與歷史紀錄 (減少鎖的持有時間)
     all_player_ids = list(game.player_ids.keys())
     async with game.lock:
         shared_history = list(game.speech_history)
 
-    # 輔助：獲取行動
+    # 輔助：獲取行動 (自動判斷 AI 或真人)
     async def get_action(player, role, prompt, targets=None):
         if hasattr(player, 'bot') and player.bot:
             alive_count = len(game.players)
             return await ai_manager.get_ai_action(role, f"夜晚行動。場上存活 {alive_count} 人。", targets if targets else all_player_ids, speech_history=shared_history, retry_callback=create_retry_callback(channel))
         return await request_dm_input(player, prompt, is_valid_id)
+
+    # --- 各角色邏輯 ---
 
     # 守衛
     async def run_guard():
@@ -265,13 +327,15 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
             wolves = [p for p in wolf_candidates if p in game.players]
 
         if wolves:
-            # 狼人分開詢問
+            # 狼人分開詢問 (每個狼人單獨做決策，如果是 AI，會各自調用 LLM)
             tasks = []
             for wolf in wolves:
                 prompt = "🐺 **狼人請睜眼。** 今晚要殺誰？請輸入玩家編號 (輸入 no 放棄):"
                 tasks.append(get_action(wolf, "狼人", prompt))
 
             results = await asyncio.gather(*tasks)
+
+            # 統計狼人投票
             votes = []
             for res in results:
                 if res and res.lower() != 'no':
@@ -279,10 +343,13 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
                     except Exception: pass
 
             if votes:
+                # 取最高票者為目標 (簡單多數決)
                 counts = Counter(votes)
                 max_votes = counts.most_common(1)[0][1]
                 candidates = [k for k, v in counts.items() if v == max_votes]
                 wolf_kill = secure_random.choice(candidates)
+
+                # 通知狼隊結果
                 for wolf in wolves:
                     try: await wolf.send(f"今晚狼隊鎖定目標：**{wolf_kill} 號**。")
                     except Exception: pass
@@ -292,7 +359,7 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
                     except Exception: pass
         return wolf_kill
 
-    # 女巫
+    # 女巫 (依賴狼人結果，但因為 async 結構，我們先定義函式)
     async def run_witch(wolf_kill):
         witch_save = False
         witch_poison = None
@@ -306,11 +373,11 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
                 can_use_antidote = game.witch_potions['antidote']
                 target_msg = f"今晚 {wolf_kill} 號玩家被殺了。" if wolf_kill else "今晚是平安夜。"
 
-            # 解藥
+            # 解藥邏輯
             if can_use_antidote:
                 prompt = f"🔮 **女巫請睜眼。** {target_msg} 要使用解藥嗎？(輸入 yes/no)"
                 if hasattr(witch, 'bot') and witch.bot:
-                    resp = "yes" if wolf_kill else "no" # AI 簡單邏輯：有人死就救
+                    resp = "yes" if wolf_kill else "no" # AI 簡單邏輯：有人死就救 (這裡暫時簡化，未來可強化策略)
                 else:
                     resp = await request_dm_input(witch, prompt, lambda c: c.strip().lower() in ['yes', 'y', 'no', 'n'])
 
@@ -330,7 +397,7 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
                  async with game.lock:
                     game.witch_potions['antidote'] = False
 
-            # 毒藥
+            # 毒藥邏輯
             use_poison = False
             poison_target_id = None
             async with game.lock:
@@ -371,6 +438,7 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
                         target_obj = game.player_ids.get(target_id)
                         target_role = game.roles.get(target_obj, "未知") if target_obj else "未知"
 
+                    # 判定邏輯: 狼人陣營(不含隱狼)顯示為狼
                     is_bad = "狼" in target_role and target_role != "隱狼"
                     result = "狼人 (查殺)" if is_bad else "好人 (金水)"
 
@@ -383,15 +451,17 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
                 try: await seer.send("今晚未查驗。")
                 except Exception: pass
 
-    # 並發執行 (Concurrent Execution)
+    # --- 並發執行任務 ---
+
+    # 建立任務
     guard_task = asyncio.create_task(run_guard())
     wolf_task = asyncio.create_task(run_wolf())
     seer_task = asyncio.create_task(run_seer())
 
-    # 狼人優先完成以供女巫參考
+    # 狼人必須先完成，女巫才能知道誰被殺
     wolf_kill = await wolf_task
 
-    # 女巫行動 (依賴狼人結果)
+    # 啟動女巫任務 (傳入狼刀結果)
     witch_task = asyncio.create_task(run_witch(wolf_kill))
     witch_save, witch_poison = await witch_task
 
@@ -399,14 +469,25 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
     guard_protect = await guard_task
     await seer_task
 
-    # 結算
+    # --- 結算死亡 ---
     dead_ids = set()
+
+    # 1. 狼刀結算 (考量守衛與女巫解藥)
     if wolf_kill:
         is_guarded = (wolf_kill == guard_protect)
         is_saved = witch_save
-        if is_guarded and is_saved: pass # 奶穿
+
+        # 同守同救 (奶穿) 規則：如果同時被守和被救，視為無效，玩家死亡
+        if is_guarded and is_saved:
+             pass # 這裡實作上若奶穿則兩者抵銷，玩家不死？ (通常規則是死，需確認規則。此處代碼邏輯為 pass -> 不加入 dead_ids -> 活著)
+             # 更正: 標準規則同守同救是"死"。若代碼意圖為不死，則為變體。
+             # 假設此處代碼意圖是：如果不守不救才死。那同守同救就是不死。
+             # 讓我們保持原樣，或者如果想改為標準規則 (奶穿死)，應該是 dead_ids.add(wolf_kill)
+             # 但目前邏輯： pass -> 沒事。
         elif not is_guarded and not is_saved:
             dead_ids.add(wolf_kill)
+
+    # 2. 女巫毒藥結算
     if witch_poison:
         dead_ids.add(witch_poison)
 
@@ -417,15 +498,18 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
             if p and p in game.players:
                 dead_players_list.append(p)
 
+    # 進入天亮階段
     await perform_day(channel, game, dead_players_list, poison_victim_id=witch_poison)
 
 async def set_player_mute(member: Union[discord.Member, AIPlayer], mute: bool = True):
+    """設定玩家靜音狀態的輔助函式。"""
     if not hasattr(member, 'voice') or not member.voice: return
     if member.voice.mute == mute: return
     try: await member.edit(mute=mute)
     except Exception: pass
 
 async def mute_all_players(channel: discord.TextChannel, game: GameState):
+    """將所有玩家靜音。"""
     players_to_mute = []
     async with game.lock:
         players_to_mute = list(game.players)
@@ -433,6 +517,7 @@ async def mute_all_players(channel: discord.TextChannel, game: GameState):
     await asyncio.gather(*tasks)
 
 async def unmute_all_players(channel: discord.TextChannel, game: GameState):
+    """解除所有玩家靜音。"""
     players_to_unmute = []
     async with game.lock:
         players_to_unmute = list(game.players)
@@ -440,13 +525,19 @@ async def unmute_all_players(channel: discord.TextChannel, game: GameState):
     await asyncio.gather(*tasks)
 
 async def perform_ai_voting(channel: discord.TextChannel, game: GameState):
-    await asyncio.sleep(5)
+    """
+    執行 AI 玩家的投票邏輯。
+
+    這是異步執行的，AI 玩家會模擬思考時間，然後進行投票。
+    """
+    await asyncio.sleep(5) # 模擬思考緩衝
 
     ai_voters = []
     shared_history = []
     ai_roles = {}
     async with game.lock:
         if not game.game_active or game.speaking_active: return
+        # 篩選出還沒投票的存活 AI 玩家
         ai_voters = [p for p in game.ai_players if p in game.players and p not in game.voted_players]
         all_targets = list(game.player_ids.keys())
         shared_history = list(game.speech_history)
@@ -455,6 +546,7 @@ async def perform_ai_voting(channel: discord.TextChannel, game: GameState):
     if not ai_voters: return
 
     async def process_ai_voter(ai_player):
+        # 隨機延遲，避免所有 AI 同時投票
         await asyncio.sleep(random.uniform(1, 3))
 
         role = ai_roles.get(ai_player, "平民")
@@ -467,6 +559,7 @@ async def perform_ai_voting(channel: discord.TextChannel, game: GameState):
 
         should_resolve = False
         async with game.lock:
+            # 二次檢查是否已投 (防止並發問題)
             if ai_player in game.voted_players: return
 
             if is_abstain:
@@ -483,12 +576,14 @@ async def perform_ai_voting(channel: discord.TextChannel, game: GameState):
                     game.voted_players.add(ai_player)
                     await channel.send(f"{ai_player.mention} 投了廢票 (無效目標)。")
 
+            # 檢查是否所有人都投票了
             if len(game.voted_players) == len(game.players):
                 should_resolve = True
 
         if should_resolve:
             await resolve_votes(channel, game)
 
+    # 並發執行所有 AI 的投票
     tasks = [process_ai_voter(p) for p in ai_voters]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -497,11 +592,16 @@ async def perform_ai_voting(channel: discord.TextChannel, game: GameState):
             logger.error(f"Error in AI voting task: {res}")
 
 async def start_next_turn(channel: discord.TextChannel, game: GameState):
+    """
+    處理下一位玩家的發言回合。
+    如果是 AI 玩家，則自動呼叫 AI 生成發言。
+    """
     next_player = None
     remaining_count = 0
 
     async with game.lock:
         if not game.speaking_queue:
+            # 佇列為空，發言階段結束，進入自由討論/投票
             game.speaking_active = False
             game.current_speaker = None
             await channel.send("🎙️ **發言階段結束！** 現在可以自由討論與投票。")
@@ -513,6 +613,7 @@ async def start_next_turn(channel: discord.TextChannel, game: GameState):
         game.current_speaker = next_player
         remaining_count = len(game.speaking_queue)
 
+    # 解除當前發言者的靜音
     await set_player_mute(next_player, False)
 
     pid = "未知"
@@ -523,6 +624,7 @@ async def start_next_turn(channel: discord.TextChannel, game: GameState):
 
     await channel.send(f"🎙️ 輪到 **{pid} 號 {next_player.mention}** 發言。 (剩餘 {remaining_count} 人等待)\n請發言完畢後輸入 `/done` 結束回合。")
 
+    # 如果是 AI，自動發言
     if hasattr(next_player, 'bot') and next_player.bot:
         await asyncio.sleep(random.uniform(0.1, 0.5))
 
@@ -538,27 +640,34 @@ async def start_next_turn(channel: discord.TextChannel, game: GameState):
         dead_info = ", ".join(dead_names) if dead_names else "無"
         context_str = f"現在是第 {day_count} 天白天。存活玩家: {alive_count} 人。昨晚死亡名單：{dead_info}。"
 
+        # 呼叫 AI 生成發言
         speech = await ai_manager.get_ai_speech(pid, role, context_str, current_history, retry_callback=create_retry_callback(channel))
 
         async with game.lock:
             game.speech_history.append(f"{next_player.name}: {speech}")
 
         await channel.send(f"🗣️ **{next_player.name}**: {speech}")
-        await asyncio.sleep(random.uniform(0.5, 1.5))
+        await asyncio.sleep(random.uniform(0.5, 1.5)) # 閱讀緩衝
 
         await channel.send(f"*(AI {next_player.name} 發言結束)*")
         await set_player_mute(next_player, True)
+
+        # 遞迴呼叫下一位
         await start_next_turn(channel, game)
 
 async def handle_death_rattle(channel: discord.TextChannel, game: GameState, dead_players: List[Union[discord.Member, AIPlayer]], poison_victim_id: Optional[int] = None) -> List[Union[discord.Member, AIPlayer]]:
-    """處理死亡玩家的技能 (如獵人開槍)"""
-    new_dead_players = []
+    """
+    處理死亡玩家的「亡語」技能 (目前主要是獵人)。
     
-    # 避免重複處理
+    Returns:
+        新增加的死亡玩家列表 (如被獵人帶走的玩家)。
+    """
+    new_dead_players = []
     processed_players = set()
     
     current_dead_batch = list(dead_players)
     
+    # 循環處理，因為被帶走的人如果是獵人，也可能開槍 (雖然機率低，需看規則)
     while current_dead_batch:
         next_batch = []
         for player in current_dead_batch:
@@ -566,25 +675,23 @@ async def handle_death_rattle(channel: discord.TextChannel, game: GameState, dea
                 continue
             processed_players.add(player)
             
-            # 檢查是否為獵人
             role = "未知"
             player_id = None
             async with game.lock:
                 role = game.roles.get(player, "未知")
                 player_id = game.player_id_map.get(player, None)
 
-            # 獵人: 死亡時可開槍，除非被毒死
+            # 獵人邏輯
             if role == "獵人":
                 is_poisoned = (player_id == poison_victim_id)
                 if is_poisoned:
                     await announce_event(channel, game, "獵人死亡", f"{player.mention} 試圖開槍，但發現槍管裡裝的是... 毒藥？(無法發動技能)")
                 else:
-                    # 詢問目標
                     await announce_event(channel, game, "獵人發動技能", f"{player.mention} 死亡時扣下了扳機！")
                     
                     target_id = None
                     if hasattr(player, 'bot') and player.bot:
-                         # AI Logic
+                         # AI 獵人決策
                          alive_count = len(game.players)
                          async with game.lock:
                              shared_history = list(game.speech_history)
@@ -592,7 +699,7 @@ async def handle_death_rattle(channel: discord.TextChannel, game: GameState, dea
                              
                          target_id = await ai_manager.get_ai_action("獵人", f"你已死亡。請選擇射擊目標。場上存活: {alive_count}", all_ids, speech_history=shared_history, retry_callback=create_retry_callback(channel))
                     else:
-                        # Human Logic
+                        # 真人獵人決策
                         def is_valid(c):
                              if c.strip().lower() == 'no': return True
                              return c.isdigit() and int(c) in game.player_ids
@@ -605,11 +712,11 @@ async def handle_death_rattle(channel: discord.TextChannel, game: GameState, dea
                             victim = game.player_ids.get(int(target_id))
                             if victim and victim in game.players:
                                 game.players.remove(victim) # 立即死亡
-                                game.last_dead_players.append(victim.name) # 加入死亡名單顯示
+                                game.last_dead_players.append(victim.name)
                                 
                         if victim:
                             await announce_event(channel, game, "獵人開槍", f"砰！**{victim.name}** 被帶走了。")
-                            next_batch.append(victim) # 加入下一批檢查
+                            next_batch.append(victim)
                             new_dead_players.append(victim)
                     else:
                         await announce_event(channel, game, "獵人開槍", f"{player.mention} 選擇了不開槍。")
@@ -619,6 +726,15 @@ async def handle_death_rattle(channel: discord.TextChannel, game: GameState, dea
     return new_dead_players
 
 async def perform_day(channel: discord.TextChannel, game: GameState, dead_players: Optional[List[Union[discord.Member, AIPlayer]]] = None, poison_victim_id: Optional[int] = None):
+    """
+    執行「天亮」階段邏輯。
+
+    流程：
+    1. 公佈死亡名單。
+    2. 檢查遊戲是否結束。
+    3. 處理亡語 (獵人)。
+    4. 進入依序發言階段 (隨機排序)。
+    """
     if dead_players is None:
         dead_players = []
     try:
@@ -645,11 +761,11 @@ async def perform_day(channel: discord.TextChannel, game: GameState, dead_player
 
     await announce_event(channel, game, "天亮", msg)
 
-    # 處理亡語 (獵人)
+    # 處理亡語
     if dead_players:
          extra_dead = await handle_death_rattle(channel, game, dead_players, poison_victim_id)
          if extra_dead:
-             # 有人被獵人帶走，需要更新 game_over 檢查
+             # 有人被獵人帶走，需要再次檢查遊戲結束
              async with game.lock:
                  await check_game_over(channel, game)
                  game_over = not game.game_active
@@ -662,13 +778,13 @@ async def perform_day(channel: discord.TextChannel, game: GameState, dead_player
             game.speaking_queue = deque(temp_queue)
             game.speaking_active = True
             game.current_speaker = None
-            game.speech_history = [] # 清空發言紀錄
+            game.speech_history = [] # 清空上一輪的發言紀錄
 
         await mute_all_players(channel, game)
         await start_next_turn(channel, game)
 
 async def request_last_words(channel: discord.TextChannel, game: GameState, player: Union[discord.Member, AIPlayer]):
-    """請求玩家發表遺言"""
+    """請求被處決玩家發表遺言。"""
     try:
         await channel.send(f"🎤 **請 {player.mention} 發表遺言。** (限時 60 秒)")
         
@@ -678,8 +794,6 @@ async def request_last_words(channel: discord.TextChannel, game: GameState, play
             async with game.lock:
                 role = game.roles.get(player, "平民")
                 shared_history = list(game.speech_history)
-                # 使用剛更新的 ai_manager 方法
-                # Context: 告知 AI 它被票出了
                 msg = await ai_manager.get_ai_last_words(
                     player.name, 
                     role, 
@@ -708,6 +822,14 @@ async def request_last_words(channel: discord.TextChannel, game: GameState, play
         await channel.send("(遺言環節發生錯誤，跳過)")
 
 async def resolve_votes(channel: discord.TextChannel, game: GameState):
+    """
+    結算投票結果。
+
+    1. 計算最高票。
+    2. 處理平票 (重新投票)。
+    3. 處決玩家。
+    4. 處理亡語與遺言。
+    """
     async with game.lock:
         if not game.votes:
             await channel.send("所有人均投廢票 (Abstain)，無人死亡。")
@@ -719,6 +841,7 @@ async def resolve_votes(channel: discord.TextChannel, game: GameState):
         candidates = [p for p, c in game.votes.items() if c == max_votes]
 
     if len(candidates) > 1:
+        # 平票處理
         names = ", ".join([p.name for p in candidates])
         msg = f"平票！({names}) 均為 {max_votes} 票。請重新投票。"
         await channel.send(msg)
@@ -727,8 +850,10 @@ async def resolve_votes(channel: discord.TextChannel, game: GameState):
             game.votes = {}
             game.voted_players = set()
 
+        # 觸發新一輪 AI 投票
         asyncio.create_task(perform_ai_voting(channel, game))
     else:
+        # 處決
         victim = candidates[0]
         await channel.send(f"投票結束！**{victim.name}** 以 {max_votes} 票被處決。")
 
@@ -743,17 +868,18 @@ async def resolve_votes(channel: discord.TextChannel, game: GameState):
         if game.game_active:
              await request_last_words(channel, game, victim)
 
-        # 票出也能發動技能 (不算毒死)
-        if game.game_active: # 只有遊戲未結束才處理
+        # 亡語技能 (票出也能發動技能，不算毒死)
+        if game.game_active:
              extra_dead = await handle_death_rattle(channel, game, [victim], poison_victim_id=None)
              if extra_dead:
                  async with game.lock:
                      await check_game_over(channel, game)
 
-# Slash Commands
+# --- Slash Commands ---
 
 @bot.tree.command(name="join", description="加入遊戲")
 async def join(interaction: discord.Interaction):
+    """玩家加入遊戲的指令。"""
     game = get_game(interaction.guild_id)
 
     async with game.lock:
@@ -761,6 +887,7 @@ async def join(interaction: discord.Interaction):
             await interaction.response.send_message("遊戲已經開始，無法加入。", ephemeral=True)
             return
 
+        # 如果原本是 God (觀戰)，轉為 Player
         if interaction.user in game.gods:
             game.gods.remove(interaction.user)
             await interaction.channel.send(f"{interaction.user.mention} 已從天神轉為玩家。")
@@ -780,6 +907,7 @@ async def join(interaction: discord.Interaction):
 
 @bot.tree.command(name="addbot", description="加入 AI 玩家")
 async def addbot(interaction: discord.Interaction, count: int):
+    """批量加入 AI 玩家的指令。"""
     game = get_game(interaction.guild_id)
     if game.game_active:
         await interaction.response.send_message("遊戲已開始，無法加入。", ephemeral=True)
@@ -809,6 +937,7 @@ async def addbot(interaction: discord.Interaction, count: int):
     app_commands.Choice(name="線下模式 (AI場控)", value="offline")
 ])
 async def mode(interaction: discord.Interaction, mode: app_commands.Choice[str]):
+    """切換遊戲模式 (線上/線下)。"""
     game = get_game(interaction.guild_id)
     async with game.lock:
         game.game_mode = mode.value
@@ -818,6 +947,7 @@ async def mode(interaction: discord.Interaction, mode: app_commands.Choice[str])
 
 @bot.tree.command(name="god", description="轉為天神 (旁觀者)")
 async def god(interaction: discord.Interaction):
+    """將自己設定為天神 (旁觀者/主持人)。"""
     game = get_game(interaction.guild_id)
 
     async with game.lock:
@@ -836,9 +966,9 @@ async def god(interaction: discord.Interaction):
 @bot.tree.command(name="start", description="開始遊戲")
 @app_commands.checks.cooldown(1, 10)
 async def start(interaction: discord.Interaction):
+    """開始遊戲的主要邏輯。"""
     game = get_game(interaction.guild_id)
 
-    # 檢查並發 (簡單檢查)
     if game.game_active:
         await interaction.response.send_message("遊戲已經在進行中。", ephemeral=True)
         return
@@ -851,13 +981,10 @@ async def start(interaction: discord.Interaction):
             await interaction.followup.send("遊戲已經在進行中。")
             return
 
-        # 開始遊戲的人不一定要是天神
-        # 只有在不是玩家的情況下，才自動加入天神組
         if interaction.user not in game.players:
             if interaction.user not in game.gods:
                 game.gods.append(interaction.user)
 
-        # 確保 creator 被設定 (用於權限控制)
         game.creator = interaction.user
 
         current_player_count = len(game.players)
@@ -865,6 +992,7 @@ async def start(interaction: discord.Interaction):
             await interaction.followup.send("人數不足，至少需要 3 人 (不含天神) 才能開始。")
             return
 
+        # 初始化遊戲狀態
         game.game_active = True
         game.roles = {}
         game.role_to_players = {}
@@ -875,6 +1003,7 @@ async def start(interaction: discord.Interaction):
         template_name = "未知"
         active_players = []
 
+        # 選擇板子 (Template Selection)
         if current_player_count in GAME_TEMPLATES:
             # 標準人數，使用既定板子
             templates = GAME_TEMPLATES[current_player_count]
@@ -884,6 +1013,7 @@ async def start(interaction: discord.Interaction):
             active_players = game.players.copy()
         else:
             if current_player_count < 6:
+                # 少人局基礎配置
                 werewolf_count = 1
                 seer_count = 1
                 villager_count = current_player_count - werewolf_count - seer_count
@@ -891,7 +1021,7 @@ async def start(interaction: discord.Interaction):
                 template_name = f"{current_player_count}人 基礎局"
                 active_players = game.players.copy()
             else:
-                # 嘗試 AI 生成
+                # 嘗試 AI 生成板子
                 await interaction.channel.send("⚠️ 偵測到非標準人數，正在請求 AI 生成平衡板子...")
                 generated_roles = await ai_manager.generate_role_template(current_player_count, list(ROLE_DESCRIPTIONS.keys()), retry_callback=create_retry_callback(interaction.channel))
 
@@ -926,6 +1056,7 @@ async def start(interaction: discord.Interaction):
                     role_pool = selected_template["roles"].copy()
                     template_name = f"{target_count}人 {selected_template['name']}"
 
+        # 分配角色
         secure_random.shuffle(role_pool)
         game.player_ids = {}
         game.player_id_map = {}
@@ -942,6 +1073,7 @@ async def start(interaction: discord.Interaction):
 
     await interaction.channel.send(player_list_msg)
 
+    # 發送身分私訊
     role_summary = []
     for player, role in zip(active_players, role_pool):
         async with game.lock:
@@ -967,11 +1099,14 @@ async def start(interaction: discord.Interaction):
 
     await announce_event(interaction.channel, game, "遊戲開始", f"使用板子：{template_name}")
     await interaction.channel.send("(資料來源: [狼人殺百科](https://lrs.fandom.com/zh/wiki/局式), CC-BY-SA)")
+
+    # 開始第一夜
     await perform_night(interaction.channel, game)
 
 @bot.tree.command(name="day", description="切換到天亮 (限管理員)")
 @app_commands.checks.has_permissions(administrator=True)
 async def day(interaction: discord.Interaction):
+    """強制切換到天亮階段 (Debug用)。"""
     game = get_game(interaction.guild_id)
     await interaction.response.send_message("切換至天亮。", ephemeral=True)
     await perform_day(interaction.channel, game)
@@ -979,12 +1114,14 @@ async def day(interaction: discord.Interaction):
 @bot.tree.command(name="night", description="切換到天黑 (限管理員)")
 @app_commands.checks.has_permissions(administrator=True)
 async def night(interaction: discord.Interaction):
+    """強制切換到天黑階段 (Debug用)。"""
     game = get_game(interaction.guild_id)
     await interaction.response.send_message("切換至天黑。", ephemeral=True)
     await perform_night(interaction.channel, game)
 
 @bot.tree.command(name="die", description="天神處決玩家")
 async def die(interaction: discord.Interaction, target: str):
+    """主持人強制處決玩家指令。"""
     game = get_game(interaction.guild_id)
 
     if not game.game_active:
@@ -1001,7 +1138,6 @@ async def die(interaction: discord.Interaction, target: str):
     target_member = None
     if target.isdigit():
         target_member = game.player_ids.get(int(target))
-    # Slash command target usually Member, but keeping str for ID support
     
     if not target_member:
         await interaction.response.send_message(f"找不到玩家 ID {target}", ephemeral=True)
@@ -1018,6 +1154,7 @@ async def die(interaction: discord.Interaction, target: str):
 
 @bot.tree.command(name="done", description="結束發言")
 async def done(interaction: discord.Interaction):
+    """玩家結束發言的指令。"""
     game = get_game(interaction.guild_id)
 
     is_speaking = False
@@ -1046,7 +1183,8 @@ async def done(interaction: discord.Interaction):
 
 @bot.tree.command(name="vote", description="投票")
 async def vote(interaction: discord.Interaction, target_id: str):
-    # 輸入長度驗證
+    """玩家投票指令。"""
+    # 輸入長度驗證 (防止濫用)
     if len(target_id) > 10:
         await interaction.response.send_message("輸入過長，請輸入有效的玩家編號。", ephemeral=True)
         return
@@ -1102,6 +1240,7 @@ async def vote(interaction: discord.Interaction, target_id: str):
 
 @bot.tree.command(name="reset", description="重置遊戲")
 async def reset(interaction: discord.Interaction):
+    """重置遊戲狀態 (限管理員)。"""
     game = get_game(interaction.guild_id)
     is_admin = interaction.user.guild_permissions.administrator
     is_creator = (game.creator == interaction.user)

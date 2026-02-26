@@ -20,6 +20,7 @@ MAX_RESPONSE_LENGTH = 2000
 
 load_dotenv()
 
+# 預編譯正則表達式，提升重複使用的效能
 DIGIT_PATTERN = re.compile(r'\d+')
 DAY_PATTERN = re.compile(r'第\s*(\d+)\s*天')
 
@@ -31,8 +32,9 @@ CACHE_FILE = "ai_cache.json"
 
 def _load_and_process_cache(cache_file: str) -> Dict:
     """
-    Helper function to load and process cache from disk synchronously.
-    Intended to be run in an executor.
+    同步輔助函式：從磁碟載入並處理快取。
+
+    此函式設計為在 Executor 中運行，避免阻塞主要 Event Loop。
     """
     if not os.path.exists(cache_file):
         return {}
@@ -43,7 +45,8 @@ def _load_and_process_cache(cache_file: str) -> Dict:
 
         result = {}
         for entry in data:
-            # Entry format: {"player_count": 5, "existing_roles": [...], "roles": [...]}
+            # 驗證快取項目的完整性
+            # 格式: {"player_count": 5, "existing_roles": [...], "roles": [...]}
             if not all(k in entry for k in ("player_count", "existing_roles", "roles")):
                 continue
 
@@ -51,6 +54,7 @@ def _load_and_process_cache(cache_file: str) -> Dict:
             existing_roles = tuple(entry["existing_roles"])
             roles = entry["roles"]
 
+            # 使用 (人數, 可用角色tuple) 作為快取鍵
             key = (player_count, existing_roles)
             result[key] = roles
         return result
@@ -61,11 +65,12 @@ def _load_and_process_cache(cache_file: str) -> Dict:
 
 def _write_cache_to_disk(data: List[Dict], cache_file: str):
     """
-    Helper function to write cache to disk synchronously.
-    Intended to be run in an executor.
+    同步輔助函式：將快取寫入磁碟。
+
+    此函式設計為在 Executor 中運行。
+    使用「寫入臨時檔 -> 重新命名」的方式實現原子寫入，防止寫入中斷導致檔案損壞。
     """
     try:
-        # 原子寫入：先寫入臨時檔再重新命名，防止寫入中斷導致檔案損壞
         dir_name = os.path.dirname(os.path.abspath(cache_file))
         fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
         try:
@@ -73,7 +78,7 @@ def _write_cache_to_disk(data: List[Dict], cache_file: str):
                 json.dump(data, f, ensure_ascii=False, indent=2)
             os.replace(tmp_path, cache_file)
         except Exception:
-            # 清理臨時檔
+            # 發生錯誤時清理臨時檔
             try:
                 os.unlink(tmp_path)
             except OSError:
@@ -84,24 +89,31 @@ def _write_cache_to_disk(data: List[Dict], cache_file: str):
         raise
 
 class RateLimitError(Exception):
-    """Exception raised when API rate limit is exceeded."""
+    """當 API 速率限制被觸發時拋出的例外。"""
     pass
 
 class RateLimiter:
     """
-    Token Bucket implementation for rate limiting.
+    使用權杖桶演算法 (Token Bucket Algorithm) 實現的速率限制器。
+
+    用於控制對外部 API (如 Gemini) 的請求頻率，避免觸發 429 Too Many Requests 錯誤。
     """
     def __init__(self, rate: float, capacity: float):
-        self.rate = rate  # Tokens per second
-        self.capacity = capacity
-        self.tokens = capacity
-        self.last_update = time.monotonic()
-        self.lock = asyncio.Lock()
+        self.rate = rate  # 速率 (Tokens per second)
+        self.capacity = capacity # 桶容量 (最大可用 Tokens)
+        self.tokens = capacity # 當前可用 Tokens
+        self.last_update = time.monotonic() # 上次更新時間
+        self.lock = asyncio.Lock() # 確保線程安全
 
     async def acquire(self):
+        """
+        嘗試獲取一個 Token。如果沒有足夠的 Token，則非同步等待直到有 Token 可用。
+        """
         async with self.lock:
             now = time.monotonic()
             elapsed = now - self.last_update
+
+            # 補充 Tokens
             self.tokens += elapsed * self.rate
             if self.tokens > self.capacity:
                 self.tokens = self.capacity
@@ -111,18 +123,28 @@ class RateLimiter:
                 self.tokens -= 1
                 return
 
-            # Calculate wait time needed to get 1 token
+            # 計算需要等待的時間
             missing = 1 - self.tokens
             wait_time = missing / self.rate
 
             if wait_time > 0:
                 await asyncio.sleep(wait_time)
 
-            # After waiting, we have exactly 0 tokens left (we consumed the one we waited for)
+            # 等待結束後，Token 剛好補滿到 1 並被消耗掉，歸零
             self.tokens = 0
             self.last_update = time.monotonic()
 
 class AIManager:
+    """
+    AI 管理器，負責處理所有與 LLM (Large Language Model) 的交互。
+
+    功能包括：
+    1. 支援多種 AI 提供者 (Ollama, Gemini CLI, Gemini API)。
+    2. 管理 API 連線階段 (aiohttp session)。
+    3. 實作重試機制與速率限制。
+    4. 快取 AI 生成的結果 (如角色板子、旁白)。
+    5. 建構 Prompt 並解析 AI 回應。
+    """
     def __init__(self, ollama_model: Optional[str] = None):
         self.provider = os.getenv('AI_PROVIDER', 'gemini').lower()
         self.ollama_model = ollama_model or os.getenv('OLLAMA_MODEL', 'gpt-oss:20b')
@@ -133,7 +155,7 @@ class AIManager:
 
         logger.info(f"AI Manager initialized. Provider: {self.provider}")
         if self.provider == 'ollama':
-            # 驗證 Ollama URL scheme
+            # 驗證 Ollama URL scheme 安全性
             if not any(self.ollama_host.startswith(scheme) for scheme in ALLOWED_URL_SCHEMES):
                 logger.warning(f"Ollama host URL scheme not allowed: {self.ollama_host}. Resetting to default.")
                 self.ollama_host = 'http://localhost:11434'
@@ -141,17 +163,24 @@ class AIManager:
         elif self.provider == 'gemini-api':
             logger.info(f"Gemini API Model: {self.gemini_model}")
 
-        # Rate Limiter: 15 RPM = 0.25 requests/sec (1 request every 4 seconds)
-        # Capacity 1 ensures strict spacing.
+        # Rate Limiter 設定: 15 RPM (每分鐘 15 次請求) = 0.25 requests/sec
+        # Capacity 1 確保請求之間有嚴格的間隔
         self.rate_limiter = RateLimiter(rate=15/60.0, capacity=1.0)
 
+        # 旁白快取 (LRU Cache)
         self.narrative_cache: OrderedDict = OrderedDict()
+
+        # 角色板子快取
         self.role_template_cache: OrderedDict = OrderedDict()
+
+        # 快取存檔鎖
         self.save_lock = asyncio.Lock()
 
     async def load_cache(self):
         """
-        Asynchronously loads the cache from disk using an executor to avoid blocking the event loop.
+        非同步載入快取。
+
+        使用 run_in_executor 將檔案讀取操作移至線程池，避免阻塞 asyncio 事件循環。
         """
         loop = asyncio.get_running_loop()
         try:
@@ -164,11 +193,13 @@ class AIManager:
 
     async def _save_cache(self):
         """
-        Asynchronously saves the cache to disk using an executor to avoid blocking the event loop.
+        非同步儲存快取。
+
+        同樣使用 run_in_executor 將檔案寫入操作移至線程池。
         """
         async with self.save_lock:
             try:
-                # Prepare data synchronously (fast memory operation)
+                # 同步準備數據 (快速記憶體操作)
                 data = []
                 for (player_count, existing_roles), roles in self.role_template_cache.items():
                     data.append({
@@ -177,32 +208,39 @@ class AIManager:
                         "roles": roles
                     })
 
-                # Offload blocking I/O to executor
+                # 將阻塞的 I/O 操作交給 Executor
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, _write_cache_to_disk, data, CACHE_FILE)
             except Exception as e:
                 logger.error(f"Failed to save cache: {e}")
 
     async def get_session(self) -> aiohttp.ClientSession:
+        """
+        獲取或創建 aiohttp ClientSession (Singleton 模式)。
+        確保整個應用程式重用同一個連線池。
+        """
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(timeout=CALLBACK_TIMEOUT)
         return self.session
 
     async def close(self):
+        """關閉 AI Manager 及其連線階段。"""
         if self.session and not self.session.closed:
             await self.session.close()
 
     async def _generate_with_ollama(self, prompt: str, reasoning_effort: str = "medium") -> str:
+        """透過 Ollama API 生成回應。"""
         url = f"{self.ollama_host}/api/generate"
         payload = {
             "model": self.ollama_model,
             "prompt": prompt,
             "stream": False
         }
-        # 設定思考程度 (low/medium/high)
+        # 設定思考程度 (low/medium/high) - 針對支援此參數的模型
         if reasoning_effort in ("low", "medium", "high"):
             payload["options"] = {"reasoning_effort": reasoning_effort}
-        # Let exceptions bubble up to generate_response for retry logic
+
+        # 讓例外向上冒泡，由 generate_response 統一處理重試
         session = await self.get_session()
         async with session.post(url, json=payload) as response:
             if response.status == 200:
@@ -211,20 +249,23 @@ class AIManager:
             else:
                 error_text = await response.text()
                 logger.error(f"Ollama API Error: {response.status} - {error_text}")
-                # Raise exception to trigger retry if it's a server error
+                # 如果是伺服器錯誤 (5xx)，拋出例外以觸發重試
                 if response.status >= 500:
                     raise aiohttp.ClientError(f"Ollama Server Error: {response.status}")
                 return ""
 
     async def _generate_with_gemini_cli(self, prompt: str) -> str:
-        """Executes gemini-cli via subprocess."""
-        # Optimization: Use direct API if key is available to avoid subprocess overhead
+        """
+        透過 Gemini CLI (subprocess) 生成回應。
+        這是 gemini-api 的備援方案，或者用於開發環境。
+        """
+        # 優化: 如果有 API Key，優先走直接 API 調用，避免 subprocess 開銷
         if self.gemini_api_key:
             return await self._generate_with_gemini_api(prompt)
 
         try:
-            # Create subprocess: gemini -p "prompt"
-            # Using list of arguments avoids shell injection risks
+            # 建立子進程: gemini -p "prompt"
+            # 使用列表參數傳遞，避免 Shell Injection 風險
             process = await asyncio.create_subprocess_exec(
                 'gemini', '-p', prompt,
                 stdout=asyncio.subprocess.PIPE,
@@ -237,7 +278,7 @@ class AIManager:
                 return stdout.decode().strip()
             else:
                 error_msg = stderr.decode().strip()
-                # Detect rate limit in stderr
+                # 檢測並拋出速率限制錯誤
                 if "429" in error_msg or "ResourceExhausted" in error_msg:
                     raise RateLimitError(f"Gemini CLI 429: {error_msg}")
 
@@ -250,7 +291,7 @@ class AIManager:
             return ""
 
     async def _generate_with_gemini_api(self, prompt: str) -> str:
-        """Executes Gemini via Google API."""
+        """透過 Google Gemini REST API 生成回應。"""
         if not self.gemini_api_key:
             logger.error("Gemini API Key is missing.")
             return ""
@@ -290,9 +331,14 @@ class AIManager:
 
     async def generate_response(self, prompt: str, retry_callback: Optional[Callable] = None, reasoning_effort: str = "medium") -> str:
         """
-        Generic async wrapper for generating content with Rate Limiting and Retry logic.
+        生成回應的通用入口函式，包含速率限制與重試邏輯。
+
+        Args:
+            prompt: 給 AI 的提示詞。
+            retry_callback: 當發生重試時呼叫的 Callback (通常用於通知使用者)。
+            reasoning_effort: 思考程度 (low/medium/high)，目前主要用於 Ollama。
         """
-        # Define the generation task based on provider
+        # 定義生成任務
         async def task():
             if self.provider == 'ollama':
                 return await self._generate_with_ollama(prompt, reasoning_effort=reasoning_effort)
@@ -304,13 +350,13 @@ class AIManager:
                 logger.warning(f"Unknown provider: {self.provider}, defaulting to Gemini CLI")
                 return await self._generate_with_gemini_cli(prompt)
 
-        # Retry logic with Rate Limiting
+        # 重試與速率限制邏輯
         max_retries = 3
-        base_delay = 4.0 # Seconds
+        base_delay = 4.0 # 基礎等待秒數 (指數退避)
 
         for attempt in range(max_retries + 1):
             try:
-                # Proactive Rate Limiting (only for Gemini)
+                # 主動速率限制 (僅針對 Gemini，因為其有嚴格配額)
                 if 'gemini' in self.provider:
                     await self.rate_limiter.acquire()
 
@@ -323,7 +369,7 @@ class AIManager:
 
                     if retry_callback:
                         try:
-                            # Invoke callback to notify user, but don't fail if it fails
+                            # 通知使用者正在重試
                             if inspect.iscoroutinefunction(retry_callback):
                                 await retry_callback()
                             else:
@@ -341,20 +387,27 @@ class AIManager:
         return ""
 
     def _truncate_response(self, text: str) -> str:
-        """截斷過長的 AI 回應，符合 Discord 訊息限制"""
+        """截斷過長的 AI 回應，確保符合 Discord 訊息長度限制 (2000字)。"""
         if len(text) > MAX_RESPONSE_LENGTH:
             return text[:MAX_RESPONSE_LENGTH - 3] + "..."
         return text
 
     async def generate_role_template(self, player_count: int, existing_roles: List[str], retry_callback: Optional[Callable] = None) -> List[str]:
         """
-        Generates a balanced role list for a given player count.
+        生成平衡的角色板子。
+
+        Args:
+            player_count: 玩家總數。
+            existing_roles: 可用的角色名稱列表。
+        Returns:
+            List[str]: 生成的角色列表 (e.g., ["狼人", "預言家", "平民"])。
         """
-        # Create cache key
+        # 建立快取鍵
         cache_key = (player_count, tuple(sorted(existing_roles)))
 
+        # 檢查快取
         if cache_key in self.role_template_cache:
-            self.role_template_cache.move_to_end(cache_key)
+            self.role_template_cache.move_to_end(cache_key) # 更新 LRU
             return self.role_template_cache[cache_key]
 
         prompt = f"""
@@ -372,8 +425,9 @@ class AIManager:
 
         response_text = await self.generate_response(prompt, retry_callback=retry_callback, reasoning_effort="low")
         try:
+            # 清理回應中的 Markdown 標記
             clean_text = response_text.replace("```json", "").replace("```", "").strip()
-            # Try to find JSON array if extra text exists
+            # 嘗試提取 JSON 陣列部分
             start = clean_text.find('[')
             end = clean_text.rfind(']')
             if start != -1 and end != -1:
@@ -381,16 +435,17 @@ class AIManager:
 
             roles = json.loads(clean_text)
             if isinstance(roles, list) and len(roles) == player_count:
-                # Validate roles exist
+                # 驗證所有角色是否合法
                 existing_roles_set = set(existing_roles)
                 if all(r in existing_roles_set for r in roles):
-                    # Cache the result
+                    # 寫入快取
                     self.role_template_cache[cache_key] = roles
+                    # 維持快取大小限制
                     if len(self.role_template_cache) > 100:
                         self.role_template_cache.popitem(last=False)
                     await self._save_cache()
                     return roles
-            if response_text: # Only print invalid if we actually got a response
+            if response_text:
                 logger.warning(f"Invalid generated roles for {player_count} players: {roles}")
             return []
         except Exception as e:
@@ -399,12 +454,15 @@ class AIManager:
 
     async def generate_narrative(self, event_type: str, context: str, language: str = "zh-TW", retry_callback: Optional[Callable] = None) -> str:
         """
-        Generates flavor text for game events.
+        生成遊戲事件的旁白 (Flavor Text)。
+
+        Args:
+            event_type: 事件類型 (如 "天黑", "天亮", "死亡")。
+            context: 事件詳細描述 (如 "平安夜", "3號玩家死亡")。
         """
-        # Ensure context is hashable and limit cache size
+        # 使用 context 字串作為快取鍵，確保可雜湊
         cache_key = (event_type, str(context), language)
         if cache_key in self.narrative_cache:
-            # Move to end to mark as recently used
             self.narrative_cache.move_to_end(cache_key)
             return self.narrative_cache[cache_key]
 
@@ -433,7 +491,6 @@ class AIManager:
         if response:
             response = self._truncate_response(response)
             self.narrative_cache[cache_key] = response
-            # Evict oldest if over limit
             if len(self.narrative_cache) > 100:
                 self.narrative_cache.popitem(last=False)
 
@@ -441,7 +498,15 @@ class AIManager:
 
     async def get_ai_action(self, role: str, game_context: str, valid_targets: List[str], speech_history: Optional[List[str]] = None, retry_callback: Optional[Callable] = None) -> str:
         """
-        Decides an action for an AI player.
+        決策 AI 玩家的行動 (如夜晚殺人、白天投票)。
+
+        Args:
+            role: AI 的角色。
+            game_context: 當前局勢描述。
+            valid_targets: 合法的目標 ID 列表。
+            speech_history: 相關的發言歷史 (用於判斷投票邏輯)。
+        Returns:
+            str: 目標 ID 或 'no' (放棄)。
         """
         strategy_info = ROLE_STRATEGIES.get(role, {})
         action_guide = strategy_info.get("action_guide", "")
@@ -452,7 +517,7 @@ class AIManager:
         if speech_history:
             history_text = "\n本輪發言/討論紀錄：\n" + "\n".join(speech_history)
 
-        # Determine if this is a voting phase or night action
+        # 判斷是投票階段還是夜晚行動
         is_voting = "投票" in game_context
         phase_guide = voting_guide if is_voting else action_guide
         phase_label = "投票決策" if is_voting else "夜晚行動決策"
@@ -495,7 +560,8 @@ class AIManager:
 
     def _get_phase_name(self, game_context: str) -> str:
         """
-        Determines the game phase (early/mid/late) from the game context string.
+        根據遊戲天數判斷遊戲階段 (early/mid/late)。
+        用於選擇對應的策略指南。
         """
         day_match = DAY_PATTERN.search(game_context)
         if day_match:
@@ -510,8 +576,10 @@ class AIManager:
 
     async def get_ai_speech(self, player_id: int, role: str, game_context: str, speech_history: Optional[List[str]] = None, retry_callback: Optional[Callable] = None) -> str:
         """
-        Generates a speech for an AI player.
-        speech_history: List of strings (previous speeches in the round).
+        生成 AI 玩家的發言。
+
+        Args:
+            speech_history: 本輪之前的玩家發言紀錄。
         """
         is_first_speaker = not bool(speech_history)
 
@@ -521,14 +589,14 @@ class AIManager:
         speech_guide = strategy_info.get("speech_guide", "")
         reasoning_guide = strategy_info.get("reasoning_guide", "")
 
-        # Phase-specific strategy
+        # 獲取階段性策略
         phase = self._get_phase_name(game_context)
         phase_guides = strategy_info.get("phase_guide", {})
         current_phase_guide = phase_guides.get(phase, "")
         phase_labels = {"early": "前期（Day 1-2）", "mid": "中期（Day 3-4）", "late": "殘局（Day 5+）"}
         phase_label = phase_labels.get(phase, "前期")
 
-        # Construct Dynamic Logic based on position
+        # 根據發言順序構建動態限制
         if is_first_speaker:
             scene_restriction = """
 # 當前場景限制（最重要的一點）
@@ -614,7 +682,7 @@ class AIManager:
 
     async def get_ai_last_words(self, player_id: str, role: str, game_context: str, speech_history: Optional[List[str]] = None, retry_callback: Optional[Callable] = None) -> str:
         """
-        Generates a last words message for an AI player who has just been voted out.
+        生成 AI 玩家被處決後的遺言。
         """
         strategy_info = ROLE_STRATEGIES.get(role, {})
         speech_style = strategy_info.get("speech_style", "自然")
@@ -650,5 +718,5 @@ class AIManager:
         response = await self.generate_response(prompt, retry_callback=retry_callback, reasoning_effort="high")
         return self._truncate_response(response)
 
-# Global instance
+# 全域實例
 ai_manager = AIManager()

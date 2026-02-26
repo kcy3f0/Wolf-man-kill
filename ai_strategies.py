@@ -1,4 +1,21 @@
 # ai_strategies.py
+# 本檔案定義了 AI 玩家在遊戲中的角色扮演指南與策略邏輯。
+
+"""
+此模組定義了 AI 玩家的行為模式。
+AIManager 會根據此處定義的策略，將指令注入到 LLM 的 Prompt 中。
+
+ROLE_STRATEGIES 結構：
+Key: 角色名稱 (str)
+Value: 策略字典 (Dict)
+    - speech_style (str): 發言的語氣風格 (如：誠懇、強勢、偽裝)。
+    - objective (str): 該角色的主要獲勝目標。
+    - speech_guide (str): 發言時的具體指導方針 (做什麼、不做什麼)。
+    - phase_guide (Dict[str, str]): 針對遊戲不同階段 (early/mid/late) 的特殊策略。
+    - reasoning_guide (str): 引導 AI 進行邏輯推理的思維鏈 (Chain of Thought)。
+    - action_guide (str): 夜晚行動或白天技能使用的指導。
+    - voting_guide (str): 投票階段的決策優先級。
+"""
 
 ROLE_STRATEGIES = {
     "平民": {
@@ -175,7 +192,7 @@ ROLE_STRATEGIES = {
         分析框架：
         1. 我有沒有已經翻牌？如果翻了，我只能靠發言影響局勢。
         2. 場上好人是否足夠？如果好人少，我的投票權很珍貴，不要冒險被投出。
-        3. 誰在推我？他是狼人想浪費好人的投票輪次，還是真的覺得我可疑？
+        3. 誰在推我？他是狼人想推我，還是真的覺得我可疑？
         """,
         "action_guide": "投票隨意，或跟隨大部隊。",
         "voting_guide": "投票策略：(1) 跟隨預言家 > (2) 如果沒把握，跟大部隊走 > (3) 如果已翻牌失去投票權，用發言替好人指路。"
