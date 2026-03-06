@@ -204,6 +204,15 @@ class GameState:
             value = PlayerList(value)
         self._players = value
 
+    def remove_player(self, player):
+        """Removes a player from the game and their role lookup list."""
+        if player in self._players:
+            self._players.remove(player)
+            role = self.roles.get(player)
+            if role and role in self.role_to_players:
+                if player in self.role_to_players[role]:
+                    self.role_to_players[role].remove(player)
+
     def reset(self):
         """
         重置遊戲狀態，準備開始新的一局。
