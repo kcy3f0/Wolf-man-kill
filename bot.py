@@ -536,22 +536,37 @@ async def perform_ai_voting(channel: discord.TextChannel, game: GameState):
 
     if not ai_voters: return
 
-    async def process_ai_voter(ai_player):
-        # 隨機延遲，避免所有 AI 同時投票
-        await asyncio.sleep(random.uniform(1, 3))
+    # 建立批量請求資料
+    players_info = {str(p): ai_roles.get(p, "平民") for p in ai_voters}
 
-        role = ai_roles.get(ai_player, "平民")
-        target_id = await ai_manager.get_ai_action(role, f"第 {game.day_count} 天白天投票階段。場上存活 {len(game.players)} 人。", all_targets, speech_history=shared_history, retry_callback=create_retry_callback(channel))
+    # 取得批量投票結果
+    try:
+        batch_results = await ai_manager.get_ai_action_batch(
+            players_info,
+            f"第 {game.day_count} 天白天投票階段。場上存活 {len(game.players)} 人。",
+            all_targets,
+            speech_history=shared_history,
+            retry_callback=create_retry_callback(channel)
+        )
+    except Exception as e:
+        logger.error(f"Error in batch AI voting: {e}")
+        batch_results = {str(p): "no" for p in ai_voters}
 
+    should_resolve = False
+
+    # 處理每一個 AI 的投票
+    for ai_player in ai_voters:
+        # 隨機延遲，模擬思考或分批輸出
+        await asyncio.sleep(random.uniform(0.5, 1.5))
+
+        target_id = batch_results.get(str(ai_player), "no")
         target_member = None
         is_abstain = (str(target_id).strip().lower() == "no")
         if not is_abstain and str(target_id).isdigit():
-             target_member = game.player_ids.get(int(target_id))
+            target_member = game.player_ids.get(int(target_id))
 
-        should_resolve = False
         async with game.lock:
-            # 二次檢查是否已投 (防止並發問題)
-            if ai_player in game.voted_players: return
+            if ai_player in game.voted_players: continue
 
             if is_abstain:
                 game.voted_players.add(ai_player)
@@ -571,16 +586,8 @@ async def perform_ai_voting(channel: discord.TextChannel, game: GameState):
             if len(game.voted_players) == len(game.players):
                 should_resolve = True
 
-        if should_resolve:
-            await resolve_votes(channel, game)
-
-    # 並發執行所有 AI 的投票
-    tasks = [process_ai_voter(p) for p in ai_voters]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    for res in results:
-        if isinstance(res, Exception):
-            logger.error(f"Error in AI voting task: {res}")
+    if should_resolve:
+        await resolve_votes(channel, game)
 
 async def start_next_turn(channel: discord.TextChannel, game: GameState):
     """
