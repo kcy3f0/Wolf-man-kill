@@ -23,6 +23,7 @@ load_dotenv()
 # 預編譯正則表達式，提升重複使用的效能
 DIGIT_PATTERN = re.compile(r'\d+')
 DAY_PATTERN = re.compile(r'第\s*(\d+)\s*天')
+JSON_ARRAY_PATTERN = re.compile(r'\[.*\]', re.DOTALL)
 
 CALLBACK_TIMEOUT = aiohttp.ClientTimeout(total=120)
 
@@ -425,13 +426,9 @@ class AIManager:
 
         response_text = await self.generate_response(prompt, retry_callback=retry_callback, reasoning_effort="low")
         try:
-            # 清理回應中的 Markdown 標記
-            clean_text = response_text.replace("```json", "").replace("```", "").strip()
             # 嘗試提取 JSON 陣列部分
-            start = clean_text.find('[')
-            end = clean_text.rfind(']')
-            if start != -1 and end != -1:
-                clean_text = clean_text[start:end+1]
+            match = JSON_ARRAY_PATTERN.search(response_text)
+            clean_text = match.group(0) if match else response_text
 
             roles = json.loads(clean_text)
             if isinstance(roles, list) and len(roles) == player_count:
