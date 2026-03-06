@@ -175,18 +175,9 @@ async def check_game_over(channel: discord.TextChannel, game: GameState):
     if not game.game_active:
         return
 
-    wolf_count = 0
-    god_count = 0
-    villager_count = 0
-
-    for p in game.players:
-        role = game.roles.get(p)
-        if role in WOLF_FACTION:
-            wolf_count += 1
-        elif role in GOD_FACTION:
-            god_count += 1
-        elif role in VILLAGER_FACTION:
-            villager_count += 1
+    wolf_count = sum(len(game.role_to_players.get(r, [])) for r in WOLF_FACTION)
+    god_count = sum(len(game.role_to_players.get(r, [])) for r in GOD_FACTION)
+    villager_count = sum(len(game.role_to_players.get(r, [])) for r in VILLAGER_FACTION)
 
     winner = None
     reason = ""
@@ -711,7 +702,7 @@ async def handle_death_rattle(channel: discord.TextChannel, game: GameState, dea
                         async with game.lock:
                             victim = game.player_ids.get(int(target_id))
                             if victim and victim in game.players:
-                                game.players.remove(victim) # 立即死亡
+                                game.remove_player(victim) # 立即死亡
                                 game.last_dead_players.append(victim.name)
                                 
                         if victim:
@@ -752,7 +743,7 @@ async def perform_day(channel: discord.TextChannel, game: GameState, dead_player
             msg += f"昨晚死亡的是：**{names}**"
             for p in dead_players:
                 if p in game.players:
-                    game.players.remove(p)
+                    game.remove_player(p)
         else:
             msg += "昨晚是平安夜。"
 
@@ -859,7 +850,7 @@ async def resolve_votes(channel: discord.TextChannel, game: GameState):
 
         async with game.lock:
             if victim in game.players:
-                game.players.remove(victim)
+                game.remove_player(victim)
             game.votes = {}
             game.voted_players = set()
             await check_game_over(channel, game)
@@ -952,7 +943,7 @@ async def god(interaction: discord.Interaction):
 
     async with game.lock:
         if interaction.user in game.players:
-            game.players.remove(interaction.user)
+            game.remove_player(interaction.user)
             await interaction.channel.send(f"{interaction.user.mention} 已從玩家轉為天神。")
 
         if interaction.user not in game.gods:
@@ -1147,7 +1138,7 @@ async def die(interaction: discord.Interaction, target: str):
         if target_member not in game.players:
             await interaction.response.send_message("該玩家不在遊戲中。", ephemeral=True)
             return
-        game.players.remove(target_member)
+        game.remove_player(target_member)
         await check_game_over(interaction.channel, game)
 
     await interaction.response.send_message(f"👑 天神執行了處決，**{target_member.name}** 已死亡。")
