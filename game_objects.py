@@ -55,6 +55,66 @@ class AIPlayer:
         """
         return hash(self.id)
 
+
+
+from collections import UserList
+
+class PlayerList(UserList):
+    """
+    自訂的玩家列表類別，繼承自 collections.UserList。
+
+    為了優化遊戲邏輯中頻繁的玩家存在性檢查 (e.g., `if player in game.players`)，
+    內部維護一個集合 (_set)，將 O(N) 的列表查詢轉換為 O(1) 的集合查詢。
+    同時保留了列表的有序特性。
+    """
+    def __init__(self, initlist=None):
+        super().__init__(initlist)
+        self._set = set(self.data)
+
+    def __contains__(self, item: Any) -> bool:
+        return item in self._set
+
+    def append(self, item: Any):
+        super().append(item)
+        self._set.add(item)
+
+    def remove(self, item: Any):
+        super().remove(item)
+        # 如果列表中還有該元素（重複情況），則不要從集合中移除
+        if item not in self.data:
+            self._set.remove(item)
+
+    def __setitem__(self, i: Union[int, slice], item: Any):
+        super().__setitem__(i, item)
+        self._set = set(self.data)
+
+    def __delitem__(self, i: Union[int, slice]):
+        super().__delitem__(i)
+        self._set = set(self.data)
+
+    def clear(self):
+        super().clear()
+        self._set.clear()
+
+    def extend(self, other: Any):
+        super().extend(other)
+        self._set.update(other)
+
+    def insert(self, i: int, item: Any):
+        super().insert(i, item)
+        self._set.add(item)
+
+    def pop(self, i: int = -1) -> Any:
+        item = super().pop(i)
+        if item not in self.data:
+            self._set.remove(item)
+        return item
+
+    def __iadd__(self, other: Any):
+        super().__iadd__(other)
+        self._set.update(other)
+        return self
+
 class GameState:
     """
     儲存單個 Discord Guild (伺服器) 的遊戲狀態。
@@ -64,7 +124,7 @@ class GameState:
     """
     def __init__(self):
         # 玩家列表 (包含真人 Member 和 AIPlayer)
-        self.players: List[Union[discord.Member, AIPlayer]] = []
+        self._players = PlayerList()
 
         # 角色分配表: Player -> Role Name (e.g., "狼人")
         self.roles: Dict[Union[discord.Member, AIPlayer], str] = {}
@@ -131,6 +191,19 @@ class GameState:
         # 昨晚死亡的玩家名稱列表 (用於天亮廣播)
         self.last_dead_players: List[str] = []
 
+
+
+
+    @property
+    def players(self) -> 'PlayerList':
+        return self._players
+
+    @players.setter
+    def players(self, value):
+        if not isinstance(value, PlayerList):
+            value = PlayerList(value)
+        self._players = value
+
     def reset(self):
         """
         重置遊戲狀態，準備開始新的一局。
@@ -138,7 +211,7 @@ class GameState:
         清除所有玩家數據、角色分配、投票紀錄和歷史訊息。
         保留 creator (房主) 和 game_mode (模式設定) 以便於連續開局。
         """
-        self.players = []
+        self._players = PlayerList()
         self.roles = {}
         self.role_to_players = {}
         self.gods = []
