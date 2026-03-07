@@ -140,14 +140,14 @@ class AIManager:
     AI 管理器，負責處理所有與 LLM (Large Language Model) 的交互。
 
     功能包括：
-    1. 支援多種 AI 提供者 (Ollama, Gemini CLI, Gemini API)。
+    1. 支援多種 AI 提供者 (Ollama, Gemini API)。
     2. 管理 API 連線階段 (aiohttp session)。
     3. 實作重試機制與速率限制。
     4. 快取 AI 生成的結果 (如角色板子、旁白)。
     5. 建構 Prompt 並解析 AI 回應。
     """
     def __init__(self, ollama_model: Optional[str] = None):
-        self.provider = os.getenv('AI_PROVIDER', 'gemini').lower()
+        self.provider = os.getenv('AI_PROVIDER', 'gemini-api').lower()
         self.ollama_model = ollama_model or os.getenv('OLLAMA_MODEL', 'gpt-oss:20b')
         self.ollama_host = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
         self.gemini_api_key = os.getenv('GEMINI_API_KEY')
@@ -255,42 +255,6 @@ class AIManager:
                     raise aiohttp.ClientError(f"Ollama Server Error: {response.status}")
                 return ""
 
-    async def _generate_with_gemini_cli(self, prompt: str) -> str:
-        """
-        透過 Gemini CLI (subprocess) 生成回應。
-        這是 gemini-api 的備援方案，或者用於開發環境。
-        """
-        # 優化: 如果有 API Key，優先走直接 API 調用，避免 subprocess 開銷
-        if self.gemini_api_key:
-            return await self._generate_with_gemini_api(prompt)
-
-        try:
-            # 建立子進程: gemini -p "prompt"
-            # 使用列表參數傳遞，避免 Shell Injection 風險
-            process = await asyncio.create_subprocess_exec(
-                'gemini', '-p', prompt,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-
-            stdout, stderr = await process.communicate()
-
-            if process.returncode == 0:
-                return stdout.decode().strip()
-            else:
-                error_msg = stderr.decode().strip()
-                # 檢測並拋出速率限制錯誤
-                if "429" in error_msg or "ResourceExhausted" in error_msg:
-                    raise RateLimitError(f"Gemini CLI 429: {error_msg}")
-
-                logger.error(f"Gemini CLI Error: {error_msg}")
-                return ""
-        except RateLimitError:
-            raise
-        except Exception as e:
-            logger.error(f"Gemini Execution Error: {e}")
-            return ""
-
     async def _generate_with_gemini_api(self, prompt: str) -> str:
         """透過 Google Gemini REST API 生成回應。"""
         if not self.gemini_api_key:
@@ -343,13 +307,11 @@ class AIManager:
         async def task():
             if self.provider == 'ollama':
                 return await self._generate_with_ollama(prompt, reasoning_effort=reasoning_effort)
-            elif self.provider == 'gemini-api':
+            elif self.provider == 'gemini-api' or self.provider == 'gemini':
                 return await self._generate_with_gemini_api(prompt)
-            elif self.provider == 'gemini-cli' or self.provider == 'gemini':
-                return await self._generate_with_gemini_cli(prompt)
             else:
-                logger.warning(f"Unknown provider: {self.provider}, defaulting to Gemini CLI")
-                return await self._generate_with_gemini_cli(prompt)
+                logger.warning(f"Unknown provider: {self.provider}, defaulting to Gemini API")
+                return await self._generate_with_gemini_api(prompt)
 
         # 重試與速率限制邏輯
         max_retries = 3
