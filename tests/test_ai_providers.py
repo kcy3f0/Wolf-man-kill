@@ -50,24 +50,6 @@ class TestAIProviders(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(args[0], "http://test/api/generate")
             self.assertEqual(kwargs['json']['model'], 'test-model')
 
-    async def test_gemini_cli_provider(self):
-        with patch.dict(os.environ, {'AI_PROVIDER': 'gemini-cli'}):
-            manager = AIManager()
-            self.managers_to_close.append(manager)
-            self.assertEqual(manager.provider, 'gemini-cli')
-
-            with patch('asyncio.create_subprocess_exec') as mock_exec:
-                mock_process = AsyncMock()
-                mock_process.communicate.return_value = (b"Gemini CLI response", b"")
-                mock_process.returncode = 0
-                mock_exec.return_value = mock_process
-
-                response = await manager.generate_response("test prompt")
-                self.assertEqual(response, "Gemini CLI response")
-
-                # Verify command
-                mock_exec.assert_called_with('gemini', '-p', 'test prompt', stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-
     async def test_gemini_api_provider(self):
         with patch.dict(os.environ, {'AI_PROVIDER': 'gemini-api', 'GEMINI_API_KEY': 'test-key', 'GEMINI_MODEL': 'test-gemini'}):
             manager = AIManager()
@@ -111,14 +93,13 @@ class TestAIProviders(unittest.IsolatedAsyncioTestCase):
             manager = AIManager()
             self.managers_to_close.append(manager)
 
-            with patch('asyncio.create_subprocess_exec') as mock_exec:
-                mock_process = AsyncMock()
-                mock_process.communicate.return_value = (b"Fallback response", b"")
-                mock_process.returncode = 0
-                mock_exec.return_value = mock_process
+            # It should fallback to gemini-api and try to call it
+            # Mock _generate_with_gemini_api directly
+            manager._generate_with_gemini_api = AsyncMock(return_value="API Fallback response")
 
-                response = await manager.generate_response("test prompt")
-                self.assertEqual(response, "Fallback response")
+            response = await manager.generate_response("test prompt")
+            self.assertEqual(response, "API Fallback response")
+            manager._generate_with_gemini_api.assert_called_once_with("test prompt")
 
 if __name__ == '__main__':
     unittest.main()
