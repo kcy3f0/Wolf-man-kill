@@ -164,6 +164,16 @@ python bot.py
 
 (請參考原文件，無需變更)
 
+## 效能測試 (Benchmark)
+
+本專案提供了一個綜合效能測試腳本 `benchmark_all.py`，用於測試 Cache I/O、Rate Limiter、正則表達式效能、GameState 操作以及 API 封裝開銷等。此腳本不需要 Discord 連線即可獨立執行。
+
+執行方式：
+
+```bash
+python benchmark_all.py
+```
+
 ## 檔案結構
 - `bot.py`: 主程式 (Slash Commands + AI 整合)。
 - `ai_manager.py`: 負責與 AI (Gemini/Ollama) 溝通的模組。
