@@ -555,6 +555,91 @@ class AIManager:
             return match.group()
         return "no"
 
+
+    async def get_ai_action_batch(self, players_info: Dict[str, str], game_context: str, valid_targets: List[str], speech_history: Optional[List[str]] = None, retry_callback: Optional[Callable] = None) -> Dict[str, str]:
+        """
+        批量決策 AI 玩家的行動 (如白天投票)。
+        一次性向 LLM 傳送所有 AI 的角色資訊與局勢，要求回傳 JSON 格式的決策結果。
+
+        Args:
+            players_info: Dict[AI玩家名稱, AI角色] (例如: {"AI_1": "平民", "AI_2": "狼人"})
+            game_context: 當前局勢描述。
+            valid_targets: 合法的目標 ID 列表。
+            speech_history: 相關的發言歷史。
+        Returns:
+            Dict[str, str]: Dict[AI玩家名稱, 目標ID 或 'no']。
+        """
+        if not players_info:
+            return {}
+
+        history_text = ""
+        if speech_history:
+            history_text = "\n本輪發言/討論紀錄：\n" + "\n".join(speech_history)
+
+        players_list_str = "\n".join([f"- {name} (身分: {role})" for name, role in players_info.items()])
+
+        prompt = f"""
+# 批量投票決策
+你正在玩狼人殺。你需要同時為以下 AI 玩家做出投票決策：
+{players_list_str}
+
+當前局勢：{game_context}
+可以選擇的目標（玩家編號）有：{valid_targets}。
+{history_text}
+
+# 策略指導與規則
+- 每個 AI 玩家都必須依據其「身分」做出最符合其陣營利益的投票決策。
+- 狼人應該嘗試把票投給好人，好人應該嘗試把票投給狼人或有嫌疑的人。
+- 每個 AI 玩家「只能」從「可選擇目標」中選擇一個編號。
+- 如果某個 AI 認為資訊不足以做出判斷，可以選擇棄票（回傳 "no"）。
+- 不要虛構理由，只能依據提供的局勢和發言紀錄。
+
+# 輸出格式
+請「只」回傳一個 JSON 格式的物件，鍵 (key) 是 AI 玩家名稱，值 (value) 是選擇的目標編號（字串型態）或 "no"。
+不要輸出任何其他解釋、分析過程或 Markdown 標記。
+範例輸出格式：
+{{
+    "AI_1": "2",
+    "AI_2": "no",
+    "AI_3": "5"
+}}
+"""
+        response = await self.generate_response(prompt, retry_callback=retry_callback, reasoning_effort="high")
+
+        # Parse JSON
+        results = {}
+        try:
+            # 尋找 JSON object
+            json_match = re.search(r'\{.*?\}', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group()
+                import json
+                parsed_json = json.loads(json_str)
+                for name, target in parsed_json.items():
+                    target_str = str(target).strip().lower().replace(".", "")
+                    if "no" in target_str:
+                        results[name] = "no"
+                    else:
+                        match = DIGIT_PATTERN.search(target_str)
+                        if match:
+                            results[name] = match.group()
+                        else:
+                            results[name] = "no"
+            else:
+                logger.error(f"Failed to find JSON in batch action response: {response}")
+                # Fallback to "no" for all
+                results = {name: "no" for name in players_info.keys()}
+        except Exception as e:
+            logger.error(f"Error parsing batch action JSON: {e}\nResponse: {response}")
+            results = {name: "no" for name in players_info.keys()}
+
+        # 確保所有輸入的玩家都有結果
+        for name in players_info.keys():
+            if name not in results:
+                results[name] = "no"
+
+        return results
+
     def _get_phase_name(self, game_context: str) -> str:
         """
         根據遊戲天數判斷遊戲階段 (early/mid/late)。
