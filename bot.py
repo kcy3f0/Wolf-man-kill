@@ -1045,9 +1045,11 @@ async def start(interaction: discord.Interaction):
                     excess_players = game.players[target_count:]
                     game.players[:] = active_players
 
-                    for p in excess_players:
-                        game.gods.append(p)
-                        await interaction.channel.send(f"{p.mention} 因人數超出板子 ({target_count}人)，自動轉為天神。")
+                    if excess_players:
+                        for p in excess_players:
+                            game.gods.append(p)
+                        mentions = " ".join([p.mention for p in excess_players])
+                        await interaction.channel.send(f"{mentions} 因人數超出板子 ({target_count}人)，自動轉為天神。")
 
                     templates = GAME_TEMPLATES[target_count]
                     selected_template = secure_random.choice(templates)
