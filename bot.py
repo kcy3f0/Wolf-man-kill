@@ -1107,22 +1107,6 @@ async def start(interaction: discord.Interaction):
     # 開始第一夜
     await perform_night(interaction.channel, game)
 
-@bot.tree.command(name="day", description="切換到天亮 (限管理員)")
-@app_commands.checks.has_permissions(administrator=True)
-async def day(interaction: discord.Interaction):
-    """強制切換到天亮階段 (Debug用)。"""
-    game = get_game(interaction.guild_id)
-    await interaction.response.send_message("切換至天亮。", ephemeral=True)
-    await perform_day(interaction.channel, game)
-
-@bot.tree.command(name="night", description="切換到天黑 (限管理員)")
-@app_commands.checks.has_permissions(administrator=True)
-async def night(interaction: discord.Interaction):
-    """強制切換到天黑階段 (Debug用)。"""
-    game = get_game(interaction.guild_id)
-    await interaction.response.send_message("切換至天黑。", ephemeral=True)
-    await perform_night(interaction.channel, game)
-
 @bot.tree.command(name="die", description="天神處決玩家")
 async def die(interaction: discord.Interaction, target: str):
     """主持人強制處決玩家指令。"""
