@@ -1091,9 +1091,15 @@ async def start(interaction: discord.Interaction):
                 await interaction.channel.send(f"無法發送私訊給 {player.mention}，請檢查隱私設定。")
 
     summary_msg = f"**本局板子：{template_name}**\n**本局身分列表：**\n" + "\n".join(role_summary)
-    for god in game.gods:
-        try: await god.send(summary_msg)
-        except Exception: pass
+
+    async def safe_send_summary(god, msg):
+        try:
+            await god.send(msg)
+        except Exception:
+            pass
+
+    if game.gods:
+        await asyncio.gather(*(safe_send_summary(god, summary_msg) for god in game.gods))
 
     await announce_event(interaction.channel, game, "遊戲開始", f"使用板子：{template_name}")
     await interaction.channel.send("(資料來源: [狼人殺百科](https://lrs.fandom.com/zh/wiki/局式), CC-BY-SA)")
