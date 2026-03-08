@@ -835,8 +835,14 @@ async def resolve_votes(channel: discord.TextChannel, game: GameState):
             game.voted_players = set()
             return
 
-        max_votes = max(game.votes.values())
-        candidates = [p for p, c in game.votes.items() if c == max_votes]
+        max_votes = -1
+        candidates = []
+        for p, c in game.votes.items():
+            if c > max_votes:
+                max_votes = c
+                candidates = [p]
+            elif c == max_votes:
+                candidates.append(p)
 
     if len(candidates) > 1:
         # 平票處理
