@@ -200,7 +200,7 @@ async def check_game_over(channel: discord.TextChannel, game: GameState):
         await announce_event(channel, game, "遊戲結束", f"獲勝者：{winner}。原因：{reason}")
 
         # 公佈所有人的真實身分
-        msg = "**本局玩家身分：**\n" + "".join([f"{p.name}: {r}\n" for p, r in game.roles.items()])
+        msg = "**本局玩家身分：**\n" + "".join(f"{p.name}: {r}\n" for p, r in game.roles.items())
 
         await channel.send(msg)
 
@@ -746,7 +746,7 @@ async def perform_day(channel: discord.TextChannel, game: GameState, dead_player
         game.last_dead_players = [p.name for p in dead_players]
 
         if dead_players:
-            names = ", ".join([p.name for p in dead_players])
+            names = ", ".join(p.name for p in dead_players)
             msg += f"昨晚死亡的是：**{names}**"
             for p in dead_players:
                 if p in game.players:
@@ -846,7 +846,7 @@ async def resolve_votes(channel: discord.TextChannel, game: GameState):
 
     if len(candidates) > 1:
         # 平票處理
-        names = ", ".join([p.name for p in candidates])
+        names = ", ".join(p.name for p in candidates)
         msg = f"平票！({names}) 均為 {max_votes} 票。請重新投票。"
         await channel.send(msg)
         async with game.lock:
@@ -1054,7 +1054,7 @@ async def start(interaction: discord.Interaction):
                     if excess_players:
                         for p in excess_players:
                             game.gods.append(p)
-                        mentions = " ".join([p.mention for p in excess_players])
+                        mentions = " ".join(p.mention for p in excess_players)
                         await interaction.channel.send(f"{mentions} 因人數超出板子 ({target_count}人)，自動轉為天神。")
 
                     templates = GAME_TEMPLATES[target_count]
