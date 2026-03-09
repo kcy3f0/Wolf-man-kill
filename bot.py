@@ -552,10 +552,8 @@ async def perform_ai_voting(channel: discord.TextChannel, game: GameState):
         logger.error(f"Error in batch AI voting: {e}")
         batch_results = {str(p): "no" for p in ai_voters}
 
-    should_resolve = False
-
-    # 處理每一個 AI 的投票
-    for ai_player in ai_voters:
+    # 定義單個 AI 投票的處理邏輯
+    async def process_ai_vote(ai_player):
         # 隨機延遲，模擬思考或分批輸出
         await asyncio.sleep(random.uniform(0.5, 1.5))
 
@@ -566,7 +564,8 @@ async def perform_ai_voting(channel: discord.TextChannel, game: GameState):
             target_member = game.player_ids.get(int(target_id))
 
         async with game.lock:
-            if ai_player in game.voted_players: continue
+            if ai_player in game.voted_players:
+                return False
 
             if is_abstain:
                 game.voted_players.add(ai_player)
@@ -584,9 +583,15 @@ async def perform_ai_voting(channel: discord.TextChannel, game: GameState):
 
             # 檢查是否所有人都投票了
             if len(game.voted_players) == len(game.players):
-                should_resolve = True
+                return True
+        return False
 
-    if should_resolve:
+    # 處理每一個 AI 的投票，並發執行
+    tasks = [process_ai_vote(ai_player) for ai_player in ai_voters]
+    results = await asyncio.gather(*tasks)
+
+    # 只要有任何一個 AI 的投票觸發了 all-voted 條件
+    if any(results):
         await resolve_votes(channel, game)
 
 async def start_next_turn(channel: discord.TextChannel, game: GameState):
