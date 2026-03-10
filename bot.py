@@ -1011,10 +1011,6 @@ async def start(interaction: discord.Interaction):
             await interaction.followup.send("遊戲已經在進行中。")
             return
 
-        if interaction.user not in game.players:
-            if interaction.user not in game.gods:
-                game.gods.append(interaction.user)
-
         game.creator = interaction.user
 
         current_player_count = len(game.players)
