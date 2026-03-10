@@ -175,6 +175,12 @@ class GameState:
 
         # --- 其他屬性 ---
 
+        # 發言順序 (保持兩輪一致)
+        self.speaking_order: List[Union[discord.Member, AIPlayer]] = []
+
+        # 當前發言輪數 (1 或 2)
+        self.speaking_round: int = 1
+
         # 遊戲模式: "online" (AI 主持) 或 "offline" (AI 場控)
         self.game_mode: str = "online"
 
@@ -236,6 +242,8 @@ class GameState:
         self.current_speaker = None
         self.speaking_active = False
         self.speech_history = []
+        self.speaking_order = []
+        self.speaking_round = 1
 
         self.game_mode = "online"
         self.ai_players = []

@@ -604,13 +604,29 @@ async def start_next_turn(channel: discord.TextChannel, game: GameState):
 
     async with game.lock:
         if not game.speaking_queue:
-            # 佇列為空，發言階段結束，進入自由討論/投票
-            game.speaking_active = False
-            game.current_speaker = None
-            await channel.send("🎙️ **發言階段結束！** 現在可以自由討論與投票。")
-            asyncio.create_task(unmute_all_players(channel, game))
-            asyncio.create_task(perform_ai_voting(channel, game))
-            return
+            # 佇列為空，檢查是否需要進行第二輪發言
+            if game.speaking_round == 1:
+                game.speaking_round = 2
+                # 重新填充發言佇列 (過濾掉在第一輪死掉的玩家)
+                game.speaking_queue = deque([p for p in game.speaking_order if p in game.players])
+                game.speech_history.append("系統: --- 進入第二輪發言 ---")
+
+                # 如果過濾後沒有存活玩家 (理論上不會，但防守一下)
+                if not game.speaking_queue:
+                    game.speaking_active = False
+                    game.current_speaker = None
+                    await channel.send("🎙️ **發言階段結束！** 現在可以自由討論與投票。")
+                    asyncio.create_task(unmute_all_players(channel, game))
+                    asyncio.create_task(perform_ai_voting(channel, game))
+                    return
+            else:
+                # 佇列為空，且已經是第二輪，發言階段結束，進入自由討論/投票
+                game.speaking_active = False
+                game.current_speaker = None
+                await channel.send("🎙️ **發言階段結束！** 現在可以自由討論與投票。")
+                asyncio.create_task(unmute_all_players(channel, game))
+                asyncio.create_task(perform_ai_voting(channel, game))
+                return
 
         next_player = game.speaking_queue.popleft()
         game.current_speaker = next_player
@@ -625,7 +641,8 @@ async def start_next_turn(channel: discord.TextChannel, game: GameState):
         pid = game.player_id_map.get(next_player, "未知")
         role = game.roles.get(next_player, "平民")
 
-    await channel.send(f"🎙️ 輪到 **{pid} 號 {next_player.mention}** 發言。 (剩餘 {remaining_count} 人等待)\n請發言完畢後輸入 `/done` 結束回合。")
+    round_text = "第一輪" if game.speaking_round == 1 else "第二輪"
+    await channel.send(f"🎙️ [{round_text}] 輪到 **{pid} 號 {next_player.mention}** 發言。 (剩餘 {remaining_count} 人等待)\n請發言完畢後輸入 `/done` 結束回合。")
 
     # 如果是 AI，自動發言
     if hasattr(next_player, 'bot') and next_player.bot:
@@ -634,17 +651,19 @@ async def start_next_turn(channel: discord.TextChannel, game: GameState):
         current_history = []
         day_count = 0
         dead_names = []
+        round_num = 1
         async with game.lock:
             current_history = list(game.speech_history)
             day_count = game.day_count
             dead_names = list(game.last_dead_players)
+            round_num = game.speaking_round
 
         alive_count = len(game.players)
         dead_info = ", ".join(dead_names) if dead_names else "無"
         context_str = f"現在是第 {day_count} 天白天。存活玩家: {alive_count} 人。昨晚死亡名單：{dead_info}。"
 
         # 呼叫 AI 生成發言
-        speech = await ai_manager.get_ai_speech(pid, role, context_str, current_history, retry_callback=create_retry_callback(channel))
+        speech = await ai_manager.get_ai_speech(pid, role, context_str, current_history, retry_callback=create_retry_callback(channel), round_num=round_num)
 
         async with game.lock:
             game.speech_history.append(f"{next_player.name}: {speech}")
@@ -774,11 +793,13 @@ async def perform_day(channel: discord.TextChannel, game: GameState, dead_player
                  game_over = not game.game_active
 
     if not game_over:
-        await channel.send("🔊 **進入依序發言階段**，正在隨機排序並設定靜音...")
+        await channel.send("🔊 **進入依序發言階段** (共兩輪討論)，正在隨機排序並設定靜音...")
         async with game.lock:
             temp_queue = list(game.players)
             secure_random.shuffle(temp_queue)
+            game.speaking_order = list(temp_queue)
             game.speaking_queue = deque(temp_queue)
+            game.speaking_round = 1
             game.speaking_active = True
             game.current_speaker = None
             game.speech_history = [] # 清空上一輪的發言紀錄

@@ -58,7 +58,7 @@ async def test_get_ai_speech_subsequent_speaker():
         prompt = args[0]
 
         assert "你是本輪的「第 1 位」發言者" not in prompt
-        assert "在你之前已經有 1 位玩家發言了" in prompt
+        assert "在你之前已經有 1 筆發言紀錄" in prompt
         assert "Player1: Hello" in prompt
         assert "引用" in prompt or "站邊" in prompt
 
