@@ -618,14 +618,16 @@ class AIManager:
                 return "late"
         return "early"
 
-    async def get_ai_speech(self, player_id: int, role: str, game_context: str, speech_history: Optional[List[str]] = None, retry_callback: Optional[Callable] = None) -> str:
+    async def get_ai_speech(self, player_id: int, role: str, game_context: str, speech_history: Optional[List[str]] = None, retry_callback: Optional[Callable] = None, round_num: int = 1) -> str:
         """
         生成 AI 玩家的發言。
 
         Args:
             speech_history: 本輪之前的玩家發言紀錄。
+            round_num: 目前發言回合 (1 或 2)。
         """
-        is_first_speaker = not bool(speech_history)
+        # 第一輪的第一位發言者，且歷史紀錄為空時才是首置位
+        is_first_speaker = not bool(speech_history) and round_num == 1
 
         strategy_info = ROLE_STRATEGIES.get(role, {})
         speech_style = strategy_info.get("speech_style", "自然")
@@ -664,21 +666,28 @@ class AIManager:
             history_text = "\n".join(speech_history) if speech_history else ""
             scene_restriction = f"""
 # 當前場景限制
-在你之前已經有 {len(speech_history) if speech_history else 0} 位玩家發言了。
-以下是他們的發言紀錄：
+這是白天的第 {round_num} 輪發言。
+在你之前已經有 {len(speech_history) if speech_history else 0} 筆發言紀錄。
+以下是所有發言紀錄：
 {history_text}
 """
+            round_logic = ""
+            if round_num == 2:
+                 round_logic = """
+   - **因為這是第二輪討論**：你必須做出更明確的判斷。如果第一輪有人攻擊你，你必須強烈反擊。你必須明確給出你心中的狼坑，並說出你這輪想把票投給誰。
+"""
+
             logic_restriction = f"""
 # 思考邏輯與限制
 1. 你必須參考前面玩家的發言內容。具體做法：
-   - 選擇 1-2 位前面發言的玩家，引用他們的觀點（使用「X 號說...」的格式）。
+   - 選擇 1-2 位玩家，引用他們的觀點（使用「X 號說...」的格式）。
    - 明確表達你是同意還是反對，並給出理由。
 2. 你可以選擇：
    - 站邊：支持某位玩家的邏輯，攻擊另一位。
    - 質疑：指出某位玩家發言中的矛盾或可疑之處。
    - 辯解：如果之前有人懷疑你，回應他的質疑。
    - 歸票：明確說出你認為應該票誰。
-3. 你的發言必須有「落點」——最後要給出一個明確的態度或結論。
+3. 你的發言必須有「落點」——最後要給出一個明確的態度或結論。{round_logic}
 4. 你的目標是：符合你所屬陣營的最大利益，並引導局勢（或隱藏自己）。
 
 **嚴禁捏造資訊**：你只能引用上方「發言紀錄」中實際出現的內容。
@@ -708,7 +717,7 @@ class AIManager:
 綜合以上分析，決定你的發言策略，然後直接輸出你的發言內容。
 
 # 你的發言任務
-請進行發言（80-120字），語氣要自然，像真人玩家一樣（可以使用口語、語助詞）。
+請進行發言（40-60字），語氣要自然，像真人玩家一樣（可以使用口語、語助詞）。
 你的發言必須包含至少一個具體的觀點或判斷，不要空泛地划水。
 嚴禁暴露你是 AI。
 
