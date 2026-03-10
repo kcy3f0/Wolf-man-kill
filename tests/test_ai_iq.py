@@ -139,6 +139,24 @@ class VoteRecord:
 
 
 @dataclass
+class LastWordsRecord:
+    """紀錄一次遺言"""
+    player_id: int
+    role: str
+    speech: str
+    is_empty: bool = False
+
+
+@dataclass
+class TimeRecord:
+    """紀錄遊戲階段耗時 (秒)"""
+    nights: list[float] = field(default_factory=list)
+    days: list[float] = field(default_factory=list)
+    votes: list[float] = field(default_factory=list)
+    total: float = 0.0
+
+
+@dataclass
 class GameResult:
     """一場遊戲的結果"""
     winner: str = ""
@@ -146,6 +164,8 @@ class GameResult:
     actions: list = field(default_factory=list)
     speeches: list = field(default_factory=list)
     votes: list = field(default_factory=list)
+    last_words: list = field(default_factory=list)
+    timing: TimeRecord = field(default_factory=TimeRecord)
     game_log: list = field(default_factory=list)
 
 # ═══════════════════════════════════════════════════════════════
@@ -530,15 +550,47 @@ class GameSimulator:
             self._log(f"    ⚔️ {victim.name} ({victim.role}) 以 {max_votes} 票被處決！")
         return victim
 
+    # ─── 遺言 ──────────────────────────────────────────────
+
+    async def run_last_words(self, player: SimulatedPlayer):
+        """處理死者遺言"""
+        self._log(f"\n    {C.DIM}--- {player.name} 的遺言 ---{C.RESET}")
+
+        context = f"現在是第 {self.day_count} 天。你在剛才被宣佈死亡。請發表遺言。"
+
+        speech = await self.ai.get_ai_last_words(
+            str(player.id), player.role, context,
+            speech_history=self.speech_history
+        )
+
+        if not speech:
+            speech = ""
+
+        record = LastWordsRecord(
+            player_id=player.id, role=player.role,
+            speech=speech, is_empty=len(speech) < 5
+        )
+        self.result.last_words.append(record)
+
+        # 顯示發言摘要
+        preview = speech.replace('\n', ' ')
+        faction_tag = C.RED + "[狼]" if not player.is_good else C.GREEN + "[好]"
+        self._log(f"    {faction_tag}{C.RESET} {player.id}號 {player.role} (遺言): {C.DIM}{preview}{C.RESET}")
+
+
     # ─── 完整遊戲 ──────────────────────────────────────────
 
     async def run_full_game(self) -> GameResult:
         """執行完整遊戲"""
         self.setup()
 
+        game_start_time = time.time()
+
         for _ in range(MAX_DAYS):
             # 夜晚
+            t0 = time.time()
             dead = await self.run_night()
+            self.result.timing.nights.append(time.time() - t0)
 
             # 檢查是否結束
             winner = self.check_game_over()
@@ -546,10 +598,18 @@ class GameSimulator:
                 self.result.winner = winner
                 self.result.day_count = self.day_count + 1
                 self._log(f"\n{C.BOLD}{C.MAGENTA}  🏆 遊戲結束！{winner}獲勝！ (第 {self.result.day_count} 天){C.RESET}")
+                self.result.timing.total = time.time() - game_start_time
                 return self.result
 
+            # 如果是第一天且有死亡，觸發遺言 (規則 C)
+            if self.day_count == 0 and dead:
+                for p in dead:
+                    await self.run_last_words(p)
+
             # 白天
+            t1 = time.time()
             await self.run_day(dead)
+            self.result.timing.days.append(time.time() - t1)
 
             # 檢查（白天不會有死亡，但以防萬一）
             winner = self.check_game_over()
@@ -557,10 +617,17 @@ class GameSimulator:
                 self.result.winner = winner
                 self.result.day_count = self.day_count
                 self._log(f"\n{C.BOLD}{C.MAGENTA}  🏆 遊戲結束！{winner}獲勝！ (第 {self.result.day_count} 天){C.RESET}")
+                self.result.timing.total = time.time() - game_start_time
                 return self.result
 
             # 投票
-            await self.run_vote()
+            t2 = time.time()
+            victim = await self.run_vote()
+            self.result.timing.votes.append(time.time() - t2)
+
+            # 如果有人被處決，觸發遺言 (規則 C)
+            if victim:
+                await self.run_last_words(victim)
 
             # 檢查
             winner = self.check_game_over()
@@ -568,11 +635,13 @@ class GameSimulator:
                 self.result.winner = winner
                 self.result.day_count = self.day_count
                 self._log(f"\n{C.BOLD}{C.MAGENTA}  🏆 遊戲結束！{winner}獲勝！ (第 {self.result.day_count} 天){C.RESET}")
+                self.result.timing.total = time.time() - game_start_time
                 return self.result
 
         self._log(f"\n{C.YELLOW}  ⏰ 遊戲超時 ({MAX_DAYS} 天)，強制結束。{C.RESET}")
         self.result.winner = "平局"
         self.result.day_count = MAX_DAYS
+        self.result.timing.total = time.time() - game_start_time
         return self.result
 
 
@@ -684,7 +753,24 @@ def print_report(results: list[GameResult], scores: dict[str, float], iq: int, e
     total_actions = sum(len(r.actions) for r in results)
     total_speeches = sum(len(r.speeches) for r in results)
     total_votes = sum(len(r.votes) for r in results)
-    print(f"  └ 總計: {total_actions} 次行動, {total_speeches} 次發言, {total_votes} 次投票")
+    total_last_words = sum(len(r.last_words) for r in results)
+    print(f"  └ 總計: {total_actions} 次行動, {total_speeches} 次發言, {total_votes} 次投票, {total_last_words} 次遺言")
+
+    print(f"\n{C.BOLD}⏱️ 詳細計時統計{C.RESET}")
+    all_nights = [t for r in results for t in r.timing.nights]
+    all_days = [t for r in results for t in r.timing.days]
+    all_votes = [t for r in results for t in r.timing.votes]
+    all_totals = [r.timing.total for r in results]
+
+    avg_night = sum(all_nights) / len(all_nights) if all_nights else 0
+    avg_day = sum(all_days) / len(all_days) if all_days else 0
+    avg_vote = sum(all_votes) / len(all_votes) if all_votes else 0
+    avg_total = sum(all_totals) / len(all_totals) if all_totals else 0
+
+    print(f"  ├ 平均夜晚行動耗時: {avg_night:.2f} 秒/晚")
+    print(f"  ├ 平均白天發言耗時: {avg_day:.2f} 秒/天")
+    print(f"  ├ 平均投票階段耗時: {avg_vote:.2f} 秒/次")
+    print(f"  └ 每局平均總耗時:   {avg_total:.2f} 秒/局")
 
     print(f"\n{C.BOLD}📈 五維評分 (0-100){C.RESET}")
 
