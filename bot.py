@@ -175,9 +175,17 @@ async def check_game_over(channel: discord.TextChannel, game: GameState):
     if not game.game_active:
         return
 
-    wolf_count = sum(len(game.role_to_players.get(r, [])) for r in WOLF_FACTION)
-    god_count = sum(len(game.role_to_players.get(r, [])) for r in GOD_FACTION)
-    villager_count = sum(len(game.role_to_players.get(r, [])) for r in VILLAGER_FACTION)
+    wolf_count = 0
+    god_count = 0
+    villager_count = 0
+    for role, players in game.role_to_players.items():
+        count = len(players)
+        if role in WOLF_FACTION:
+            wolf_count += count
+        elif role in GOD_FACTION:
+            god_count += count
+        elif role in VILLAGER_FACTION:
+            villager_count += count
 
     winner = None
     reason = ""
