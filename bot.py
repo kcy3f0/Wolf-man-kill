@@ -320,6 +320,10 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
 
     # 狼人
     async def run_wolf():
+        async def safe_send(wolf, msg):
+            try: await wolf.send(msg)
+            except Exception: pass
+
         wolf_kill = None
         async with game.lock:
             wolf_candidates = game.role_to_players.get("狼人", [])
@@ -349,13 +353,9 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
                 wolf_kill = secure_random.choice(candidates)
 
                 # 通知狼隊結果
-                for wolf in wolves:
-                    try: await wolf.send(f"今晚狼隊鎖定目標：**{wolf_kill} 號**。")
-                    except Exception: pass
+                await asyncio.gather(*(safe_send(wolf, f"今晚狼隊鎖定目標：**{wolf_kill} 號**。") for wolf in wolves))
             else:
-                 for wolf in wolves:
-                    try: await wolf.send("今晚狼隊沒有達成目標 (或棄刀)。")
-                    except Exception: pass
+                await asyncio.gather(*(safe_send(wolf, "今晚狼隊沒有達成目標 (或棄刀)。") for wolf in wolves))
         return wolf_kill
 
     # 女巫 (依賴狼人結果，但因為 async 結構，我們先定義函式)
