@@ -347,9 +347,17 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
 
             if votes:
                 # 取最高票者為目標 (簡單多數決)
-                counts = Counter(votes)
-                max_votes = counts.most_common(1)[0][1]
-                candidates = [k for k, v in counts.items() if v == max_votes]
+                max_votes = 0
+                candidates = []
+                counts = {}
+                for target_id in votes:
+                    count = counts.get(target_id, 0) + 1
+                    counts[target_id] = count
+                    if count > max_votes:
+                        max_votes = count
+                        candidates = [target_id]
+                    elif count == max_votes:
+                        candidates.append(target_id)
                 wolf_kill = secure_random.choice(candidates)
 
                 # 通知狼隊結果
