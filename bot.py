@@ -1117,8 +1117,7 @@ async def start(interaction: discord.Interaction):
                     game.players[:] = active_players
 
                     if excess_players:
-                        for p in excess_players:
-                            game.gods.append(p)
+                        game.gods.extend(excess_players)
                         mentions = " ".join(p.mention for p in excess_players)
                         await interaction.channel.send(f"{mentions} 因人數超出板子 ({target_count}人)，自動轉為天神。")
 
