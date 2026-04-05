@@ -160,6 +160,10 @@ class TestBotFeatures(unittest.IsolatedAsyncioTestCase):
 
         game.players = [victim, survivor]
         game.roles = {victim: "狼人", survivor: "平民"}
+        game.role_to_players = {"狼人": [victim], "平民": [survivor]}
+        game.wolf_count = 1
+        game.villager_count = 1
+        game.god_count = 0
 
         game.gods = [interaction.user]
 

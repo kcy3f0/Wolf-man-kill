@@ -53,6 +53,9 @@ class TestWinConditions(unittest.IsolatedAsyncioTestCase):
             "平民": [p2],
             "預言家": [p3]
         }
+        game.wolf_count = 1
+        game.villager_count = 1
+        game.god_count = 1
         game.game_active = True
 
         # Simulate Night: Wolf kills Villager (p2)
@@ -90,6 +93,9 @@ class TestWinConditions(unittest.IsolatedAsyncioTestCase):
             "平民": [p2],
             "預言家": [p3]
         }
+        game.wolf_count = 1
+        game.villager_count = 1
+        game.god_count = 1
         game.game_active = True
 
         # Simulate Night: Wolf kills Seer (p3)
@@ -121,6 +127,9 @@ class TestWinConditions(unittest.IsolatedAsyncioTestCase):
             "狼人": [p1],
             "平民": [p2]
         }
+        game.wolf_count = 1
+        game.villager_count = 1
+        game.god_count = 0
         game.game_active = True
         game.votes = {p1: 2} # Both vote for wolf
         game.voted_players = {p1, p2}

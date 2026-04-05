@@ -210,17 +210,9 @@ async def check_game_over(channel: discord.TextChannel, game: GameState):
     if not game.game_active:
         return
 
-    wolf_count = 0
-    god_count = 0
-    villager_count = 0
-    for role, players in game.role_to_players.items():
-        count = len(players)
-        if role in WOLF_FACTION:
-            wolf_count += count
-        elif role in GOD_FACTION:
-            god_count += count
-        elif role in VILLAGER_FACTION:
-            villager_count += count
+    wolf_count = game.wolf_count
+    god_count = game.god_count
+    villager_count = game.villager_count
 
     winner = None
     reason = ""
@@ -1129,6 +1121,9 @@ async def start(interaction: discord.Interaction):
         # 分配角色
         secure_random.shuffle(role_pool)
         game.player_ids = {}
+        game.wolf_count = 0
+        game.god_count = 0
+        game.villager_count = 0
         game.player_id_map = {}
         game.witch_potions = {'antidote': True, 'poison': True}
         game.day_count = 0
@@ -1151,6 +1146,14 @@ async def start(interaction: discord.Interaction):
              if role not in game.role_to_players:
                  game.role_to_players[role] = []
              game.role_to_players[role].append(player)
+
+             if role in WOLF_FACTION:
+                 game.wolf_count += 1
+             elif role in GOD_FACTION:
+                 game.god_count += 1
+             elif role in VILLAGER_FACTION:
+                 game.villager_count += 1
+
         pid = game.player_id_map[player]
         role_summary.append(f"{pid}. {player.name}: {role}")
         try:

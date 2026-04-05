@@ -197,6 +197,11 @@ class GameState:
         # 昨晚死亡的玩家名稱列表 (用於天亮廣播)
         self.last_dead_players: List[str] = []
 
+        # 陣營存活人數 (優化 check_game_over 效能)
+        self.wolf_count: int = 0
+        self.god_count: int = 0
+        self.villager_count: int = 0
+
 
 
 
@@ -211,13 +216,21 @@ class GameState:
         self._players = value
 
     def remove_player(self, player):
-        """Removes a player from the game and their role lookup list."""
+        """Removes a player from the game, their role lookup list, and updates faction counters."""
+        from game_data import WOLF_FACTION, GOD_FACTION, VILLAGER_FACTION
+
         if player in self._players:
             self._players.remove(player)
             role = self.roles.get(player)
             if role and role in self.role_to_players:
                 if player in self.role_to_players[role]:
                     self.role_to_players[role].remove(player)
+                    if role in WOLF_FACTION:
+                        self.wolf_count -= 1
+                    elif role in GOD_FACTION:
+                        self.god_count -= 1
+                    elif role in VILLAGER_FACTION:
+                        self.villager_count -= 1
 
     def reset(self):
         """
@@ -249,6 +262,10 @@ class GameState:
         self.ai_players = []
         self.day_count = 0
         self.last_dead_players = []
+
+        self.wolf_count = 0
+        self.god_count = 0
+        self.villager_count = 0
 
 # 全域遊戲字典: Guild ID -> GameState
 # 每個 Discord 伺服器擁有獨立的遊戲實例
