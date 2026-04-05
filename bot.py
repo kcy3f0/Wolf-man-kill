@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from random import SystemRandom
 import random
 from typing import Optional, List, Dict, Union, Any, Callable
+import io
+from PIL import Image, ImageDraw, ImageFont
 
 # Modules
 from ai_manager import ai_manager
@@ -38,6 +40,38 @@ secure_random = SystemRandom()
 # 載入環境變數
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
+
+def generate_number_image(number: int) -> io.BytesIO:
+    """動態生成一張帶有編號的圖片"""
+    # 建立一張 500x500 的黑色背景圖片
+    img_size = 500
+    image = Image.new("RGB", (img_size, img_size), color=(30, 30, 30))
+    draw = ImageDraw.Draw(image)
+
+    text = str(number)
+
+    # 嘗試載入預設字體並設定大小，如果無法設定大小則使用基本預設
+    try:
+        font = ImageFont.load_default(size=250)
+    except Exception:
+        font = ImageFont.load_default()
+
+    # 計算文字位置並置中 (使用 textbbox)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+
+    x = (img_size - text_width) / 2
+    y = (img_size - text_height) / 2
+
+    # 微調 y 軸，因為 textbbox 的計算有時候不在視覺正中央
+    draw.text((x, y - (bbox[1]/2)), text, fill=(255, 255, 255), font=font)
+
+    # 將圖片存入記憶體
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer
 
 # 設定 Intent (權限)
 intents = discord.Intents.default()
@@ -1130,7 +1164,12 @@ async def start(interaction: discord.Interaction):
         try:
             description = ROLE_DESCRIPTIONS.get(role, "暫無說明")
             msg = f"您的編號是：**{pid}**\n您的身分是：**{role}**\n\n**功能說明：**\n{description}"
-            await player.send(msg)
+
+            # 動態生成帶有編號的圖片
+            image_buffer = generate_number_image(pid)
+            discord_file = discord.File(fp=image_buffer, filename=f"number_{pid}.png")
+
+            await player.send(msg, file=discord_file)
         except Exception as e:
             if not hasattr(player, 'bot') or not player.bot:
                 logger.warning(f"Failed to DM {player.name}: {e}")
