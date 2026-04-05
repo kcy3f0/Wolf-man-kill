@@ -61,6 +61,9 @@ class TestBotStart(unittest.IsolatedAsyncioTestCase):
         game = bot.get_game(ctx.guild_id)
         game.players = [player1, player2, player3]
         game.gods = [ctx.user]
+        game.wolf_count = 1
+        game.villager_count = 1
+        game.god_count = 1
 
         # Call start callback
         await bot.start.callback(ctx)

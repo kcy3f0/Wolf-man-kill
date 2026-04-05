@@ -44,6 +44,10 @@ class TestLastWords(unittest.IsolatedAsyncioTestCase):
         self.game.players = [self.ai_player, self.human_player]
         self.game.player_ids = {101: self.ai_player, 102: self.human_player}
         self.game.roles = {self.ai_player: "狼人", self.human_player: "平民"}
+        self.game.role_to_players = {"狼人": [self.ai_player], "平民": [self.human_player]}
+        self.game.wolf_count = 1
+        self.game.villager_count = 1
+        self.game.god_count = 0
 
     async def test_ai_last_words(self):
         """Test AI generating and sending last words when voted out."""

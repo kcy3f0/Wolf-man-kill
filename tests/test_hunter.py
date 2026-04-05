@@ -38,6 +38,10 @@ class TestHunterLogic(unittest.IsolatedAsyncioTestCase):
         self.game.player_ids = {1: self.hunter, 2: self.wolf, 3: self.villager}
         self.game.player_id_map = {self.hunter: 1, self.wolf: 2, self.villager: 3}
         self.game.roles = {self.hunter: "獵人", self.wolf: "狼人", self.villager: "平民"}
+        self.game.role_to_players = {"獵人": [self.hunter], "狼人": [self.wolf], "平民": [self.villager]}
+        self.game.wolf_count = 1
+        self.game.villager_count = 1
+        self.game.god_count = 1
 
     async def test_hunter_shoot_success(self):
         # Mock input to select Villager (ID 3)
