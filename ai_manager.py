@@ -24,6 +24,7 @@ load_dotenv()
 DIGIT_PATTERN = re.compile(r'\d+')
 DAY_PATTERN = re.compile(r'第\s*(\d+)\s*天')
 JSON_ARRAY_PATTERN = re.compile(r'\[.*\]', re.DOTALL)
+JSON_OBJECT_PATTERN = re.compile(r'\{.*?\}', re.DOTALL)
 
 CALLBACK_TIMEOUT = aiohttp.ClientTimeout(total=120)
 
@@ -572,7 +573,7 @@ class AIManager:
         results = {}
         try:
             # 尋找 JSON object
-            json_match = re.search(r'\{.*?\}', response, re.DOTALL)
+            json_match = JSON_OBJECT_PATTERN.search(response)
             if json_match:
                 json_str = json_match.group()
                 import json
