@@ -28,7 +28,7 @@ sys.modules['aiohttp'] = mock_aiohttp
 os.environ['AI_PROVIDER'] = 'ollama'
 
 # 匯入需要進行 Benchmark 的模組
-from ai_manager import AIManager, RateLimiter, _load_and_process_cache, _write_cache_to_disk, DIGIT_PATTERN, DAY_PATTERN, JSON_ARRAY_PATTERN
+from ai_manager import AIManager, RateLimiter, _load_and_process_cache, _write_cache_to_disk, DIGIT_PATTERN, DAY_PATTERN, JSON_ARRAY_PATTERN, JSON_OBJECT_PATTERN
 from game_objects import PlayerList, GameState, AIPlayer
 
 # 建立一個測試用的目錄
@@ -100,7 +100,8 @@ async def benchmark_regex():
 
     text_digit = "我選擇 4 號玩家"
     text_day = "目前局勢：第 2 天"
-    text_json = '這裡是一段回應：\n["狼人", "平民", "預言家"]\n請參考。'
+    text_json_array = '這裡是一段回應：\n["狼人", "平民", "預言家"]\n請參考。'
+    text_json_object = '這裡是一段回應：\n{"AI_1": "2", "AI_2": "no"}\n請參考。'
 
     iterations = 50000
 
@@ -129,17 +130,29 @@ async def benchmark_regex():
     # JSON ARRAY PATTERN
     start_time = time.perf_counter()
     for _ in range(iterations):
-        re.search(r'\[.*\]', text_json, re.DOTALL)
-    uncompiled_json = (time.perf_counter() - start_time) / iterations
+        re.search(r'\[.*\]', text_json_array, re.DOTALL)
+    uncompiled_json_array = (time.perf_counter() - start_time) / iterations
 
     start_time = time.perf_counter()
     for _ in range(iterations):
-        JSON_ARRAY_PATTERN.search(text_json)
-    compiled_json = (time.perf_counter() - start_time) / iterations
+        JSON_ARRAY_PATTERN.search(text_json_array)
+    compiled_json_array = (time.perf_counter() - start_time) / iterations
+
+    # JSON OBJECT PATTERN
+    start_time = time.perf_counter()
+    for _ in range(iterations):
+        re.search(r'\{.*?\}', text_json_object, re.DOTALL)
+    uncompiled_json_object = (time.perf_counter() - start_time) / iterations
+
+    start_time = time.perf_counter()
+    for _ in range(iterations):
+        JSON_OBJECT_PATTERN.search(text_json_object)
+    compiled_json_object = (time.perf_counter() - start_time) / iterations
 
     print(f"  - 預編譯 DIGIT 效能提升: {(uncompiled_digit / compiled_digit):.2f}x ({format_time(compiled_digit)} vs {format_time(uncompiled_digit)})")
     print(f"  - 預編譯 DAY 效能提升:   {(uncompiled_day / compiled_day):.2f}x ({format_time(compiled_day)} vs {format_time(uncompiled_day)})")
-    print(f"  - 預編譯 JSON 效能提升:  {(uncompiled_json / compiled_json):.2f}x ({format_time(compiled_json)} vs {format_time(uncompiled_json)})")
+    print(f"  - 預編譯 JSON ARRAY 效能提升:  {(uncompiled_json_array / compiled_json_array):.2f}x ({format_time(compiled_json_array)} vs {format_time(uncompiled_json_array)})")
+    print(f"  - 預編譯 JSON OBJECT 效能提升: {(uncompiled_json_object / compiled_json_object):.2f}x ({format_time(compiled_json_object)} vs {format_time(uncompiled_json_object)})")
     print("-" * 50)
 
 async def benchmark_game_state():
