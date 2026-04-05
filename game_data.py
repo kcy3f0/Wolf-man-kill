@@ -39,6 +39,9 @@ GAME_TEMPLATES = {
     ]
 }
 
+# 支援的人數列表 (由大到小排序)，用於板子匹配。
+SUPPORTED_COUNTS = sorted(GAME_TEMPLATES.keys(), reverse=True)
+
 # 角色功能說明
 # 用於發送給玩家的私訊中，解釋該角色的技能與目標。
 ROLE_DESCRIPTIONS = {

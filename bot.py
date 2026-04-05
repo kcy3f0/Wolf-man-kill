@@ -17,7 +17,8 @@ from game_data import (
     ROLE_DESCRIPTIONS, 
     WOLF_FACTION, 
     GOD_FACTION, 
-    VILLAGER_FACTION
+    VILLAGER_FACTION,
+    SUPPORTED_COUNTS
 )
 from game_objects import (
     GameState, 
@@ -1074,15 +1075,7 @@ async def start(interaction: discord.Interaction):
                 else:
                     # AI 失敗，回退到標準縮減邏輯
                     await interaction.channel.send("AI 生成失敗或連線逾時，切換為標準板子縮減模式。")
-                    supported_counts = sorted(GAME_TEMPLATES.keys(), reverse=True)
-                    target_count = 0
-                    for count in supported_counts:
-                        if current_player_count >= count:
-                            target_count = count
-                            break
-
-                    if target_count == 0:
-                        target_count = 6
+                    target_count = next((count for count in SUPPORTED_COUNTS if current_player_count >= count), 6)
 
                     secure_random.shuffle(game.players)
                     active_players = game.players[:target_count]
