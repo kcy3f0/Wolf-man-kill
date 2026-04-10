@@ -598,7 +598,7 @@ async def perform_ai_voting(channel: discord.TextChannel, game: GameState):
     # 定義單個 AI 投票的處理邏輯
     async def process_ai_vote(ai_player):
         # 隨機延遲，模擬思考或分批輸出
-        await asyncio.sleep(random.uniform(0.5, 1.5))
+        await asyncio.sleep(secure_random.uniform(0.5, 1.5))
 
         target_id = batch_results.get(str(ai_player), "no")
         target_member = None
@@ -689,7 +689,7 @@ async def start_next_turn(channel: discord.TextChannel, game: GameState):
 
     # 如果是 AI，自動發言
     if hasattr(next_player, 'bot') and next_player.bot:
-        await asyncio.sleep(random.uniform(0.1, 0.5))
+        await asyncio.sleep(secure_random.uniform(0.1, 0.5))
 
         current_history = []
         day_count = 0
@@ -712,7 +712,7 @@ async def start_next_turn(channel: discord.TextChannel, game: GameState):
             game.speech_history.append(f"{next_player.name}: {speech}")
 
         await channel.send(f"🗣️ **{next_player.name}**: {speech}")
-        await asyncio.sleep(random.uniform(0.5, 1.5)) # 閱讀緩衝
+        await asyncio.sleep(secure_random.uniform(0.5, 1.5)) # 閱讀緩衝
 
         await channel.send(f"*(AI {next_player.name} 發言結束)*")
         await set_player_mute(next_player, True)
