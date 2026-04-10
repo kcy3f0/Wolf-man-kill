@@ -338,18 +338,21 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
                 try:
                     guard_protect = int(resp)
                     try: await guard.send(f"今晚守護了 {guard_protect} 號。")
-                    except Exception: pass
+                    except Exception as e:
+                        logger.warning(f"Failed to send DM to guard: {e}")
                 except ValueError: pass
             else:
                 try: await guard.send("今晚不守護任何人。")
-                except Exception: pass
+                except Exception as e:
+                    logger.warning(f"Failed to send DM to guard: {e}")
         return guard_protect
 
     # 狼人
     async def run_wolf():
         async def safe_send(wolf, msg):
             try: await wolf.send(msg)
-            except Exception: pass
+            except Exception as e:
+                logger.warning(f"Failed to send DM to wolf {wolf.name}: {e}")
 
         wolf_kill = None
         async with game.lock:
@@ -369,8 +372,10 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
             votes = []
             for res in results:
                 if res and res.lower() != 'no':
-                    try: votes.append(int(res))
-                    except Exception: pass
+                    try:
+                        votes.append(int(res))
+                    except ValueError:
+                        pass
 
             if votes:
                 # 取最高票者為目標 (簡單多數決)
@@ -419,13 +424,16 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
                     witch_save = True
                     use_antidote = True
                     try: await witch.send("已使用解藥。")
-                    except Exception: pass
+                    except Exception as e:
+                        logger.warning(f"Failed to send DM to witch: {e}")
                 else:
                     try: await witch.send("未使用解藥。")
-                    except Exception: pass
+                    except Exception as e:
+                        logger.warning(f"Failed to send DM to witch: {e}")
             else:
                  try: await witch.send(f"🔮 **女巫請睜眼。** {target_msg} (解藥已用完)")
-                 except Exception: pass
+                 except Exception as e:
+                     logger.warning(f"Failed to send DM to witch: {e}")
 
             if use_antidote:
                  async with game.lock:
@@ -444,12 +452,16 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
                         witch_poison = int(resp)
                         use_poison = True
                         poison_target_id = witch_poison
-                        try: await witch.send(f"已對 {witch_poison} 號使用毒藥。")
-                        except Exception: pass
-                    except Exception: pass
+                        try:
+                            await witch.send(f"已對 {witch_poison} 號使用毒藥。")
+                        except Exception as e:
+                            logger.warning(f"Failed to send DM to witch: {e}")
+                    except ValueError:
+                        pass
                 else:
                     try: await witch.send("未使用毒藥。")
-                    except Exception: pass
+                    except Exception as e:
+                        logger.warning(f"Failed to send DM to witch: {e}")
 
             if use_poison:
                  async with game.lock:
@@ -477,13 +489,16 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
                     result = "狼人 (查殺)" if is_bad else "好人 (金水)"
 
                     try: await seer.send(f"{target_id} 號的身分是：**{result}**")
-                    except Exception: pass
+                    except Exception as e:
+                        logger.warning(f"Failed to send DM to seer: {e}")
                 except ValueError:
                     try: await seer.send("無效的編號。")
-                    except Exception: pass
+                    except Exception as e:
+                        logger.warning(f"Failed to send DM to seer: {e}")
             else:
                 try: await seer.send("今晚未查驗。")
-                except Exception: pass
+                except Exception as e:
+                    logger.warning(f"Failed to send DM to seer: {e}")
 
     # --- 並發執行任務 ---
 
@@ -540,7 +555,8 @@ async def set_player_mute(member: Union[discord.Member, AIPlayer], mute: bool = 
     if not hasattr(member, 'voice') or not member.voice: return
     if member.voice.mute == mute: return
     try: await member.edit(mute=mute)
-    except Exception: pass
+    except Exception as e:
+        logger.warning(f"Failed to edit member {member.name}: {e}")
 
 async def mute_all_players(channel: discord.TextChannel, game: GameState):
     """將所有玩家靜音。"""
@@ -804,7 +820,8 @@ async def perform_day(channel: discord.TextChannel, game: GameState, dead_player
         dead_players = []
     try:
         await channel.set_permissions(channel.guild.default_role, send_messages=True)
-    except Exception: pass
+    except Exception as e:
+        logger.error(f"Failed to set channel permissions: {e}")
 
     msg = "🌞 **天亮了！** 請開始討論。\n"
     game_over = False
@@ -1175,8 +1192,8 @@ async def start(interaction: discord.Interaction):
     async def safe_send_summary(god, msg):
         try:
             await god.send(msg)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to send summary DM to god {god.name}: {e}")
 
     if game.gods:
         await asyncio.gather(*(safe_send_summary(god, summary_msg) for god in game.gods))
@@ -1320,8 +1337,10 @@ async def reset(interaction: discord.Interaction):
     async with game.lock:
         game.reset()
 
-    try: await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=True)
-    except Exception: pass
+    try:
+        await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=True)
+    except Exception as e:
+        logger.error(f"Failed to set channel permissions: {e}")
 
     await interaction.response.send_message("遊戲已重置。")
 
