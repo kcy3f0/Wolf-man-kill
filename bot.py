@@ -248,6 +248,17 @@ async def check_game_over(channel: discord.TextChannel, game: GameState):
 
         await channel.send("請使用 `/reset` 重置遊戲以開始新的一局。")
 
+def is_valid_id(content: str, player_ids: dict) -> bool:
+    """
+    驗證輸入內容是否為有效的玩家 ID 或 'no'。
+    """
+    if content.strip().lower() == 'no': return True
+    try:
+        pid = int(content)
+        return pid in player_ids
+    except ValueError:
+        return False
+
 async def request_dm_input(player: Union[discord.Member, AIPlayer], prompt: str, valid_check: Callable[[str], bool], timeout: int = 45) -> Optional[str]:
     """
     私訊請求使用者輸入的通用輔助函式。
@@ -304,12 +315,8 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
         await channel.send("錯誤：設定頻道權限時發生未知錯誤。")
 
     # 輸入驗證函式
-    def is_valid_id(content):
-        if content.strip().lower() == 'no': return True
-        try:
-            pid = int(content)
-            return pid in game.player_ids
-        except Exception: return False
+    def is_valid_input(content):
+        return is_valid_id(content, game.player_ids)
 
     # 統一獲取目標 ID 列表與歷史紀錄 (減少鎖的持有時間)
     all_player_ids = list(game.player_ids.keys())
@@ -321,7 +328,7 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
         if hasattr(player, 'bot') and player.bot:
             alive_count = len(game.players)
             return await ai_manager.get_ai_action(role, f"夜晚行動。場上存活 {alive_count} 人。", targets if targets else all_player_ids, speech_history=shared_history, retry_callback=create_retry_callback(channel))
-        return await request_dm_input(player, prompt, is_valid_id)
+        return await request_dm_input(player, prompt, is_valid_input)
 
     # --- 各角色邏輯 ---
 
