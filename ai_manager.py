@@ -49,7 +49,7 @@ def _load_and_process_cache(cache_file: str) -> Dict:
         for entry in data:
             # 驗證快取項目的完整性
             # 格式: {"player_count": 5, "existing_roles": [...], "roles": [...]}
-            if not all(k in entry for k in ("player_count", "existing_roles", "roles")):
+            if not ("player_count" in entry and "existing_roles" in entry and "roles" in entry):
                 continue
 
             player_count = entry["player_count"]
@@ -397,7 +397,7 @@ class AIManager:
             if isinstance(roles, list) and len(roles) == player_count:
                 # 驗證所有角色是否合法
                 existing_roles_set = set(existing_roles)
-                if all(r in existing_roles_set for r in roles):
+                if existing_roles_set.issuperset(roles):
                     # 寫入快取
                     self.role_template_cache[cache_key] = roles
                     # 維持快取大小限制
