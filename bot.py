@@ -11,6 +11,7 @@ import random
 from typing import Optional, List, Dict, Union, Any, Callable
 import io
 from PIL import Image, ImageDraw, ImageFont
+from functools import lru_cache
 
 # Modules
 from ai_manager import ai_manager
@@ -42,6 +43,14 @@ secure_random = SystemRandom()
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
+@lru_cache(maxsize=1)
+def _get_default_font():
+    """快取並取得預設字體以提升效能"""
+    try:
+        return ImageFont.load_default(size=250)
+    except Exception:
+        return ImageFont.load_default()
+
 def generate_number_image(number: int) -> io.BytesIO:
     """動態生成一張帶有編號的圖片"""
     # 建立一張 500x500 的黑色背景圖片
@@ -51,11 +60,8 @@ def generate_number_image(number: int) -> io.BytesIO:
 
     text = str(number)
 
-    # 嘗試載入預設字體並設定大小，如果無法設定大小則使用基本預設
-    try:
-        font = ImageFont.load_default(size=250)
-    except Exception:
-        font = ImageFont.load_default()
+    # 取得快取的字體
+    font = _get_default_font()
 
     # 計算文字位置並置中 (使用 textbbox)
     bbox = draw.textbbox((0, 0), text, font=font)
