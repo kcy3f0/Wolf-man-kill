@@ -1,45 +1,41 @@
 import sys
-import os
+from unittest.mock import MagicMock, AsyncMock
+
+# Mock dependencies before importing ai_manager
+sys.modules['dotenv'] = MagicMock()
+sys.modules['aiohttp'] = MagicMock()
+sys.modules['ai_strategies'] = MagicMock()
+sys.modules['ai_strategies'].ROLE_STRATEGIES = {}
+
 import asyncio
 import unittest
-from unittest.mock import MagicMock, AsyncMock, patch
+from ai_manager import AIManager
 
-# Mock dependencies before importing anything
-mock_discord = MagicMock()
-sys.modules['discord'] = mock_discord
-sys.modules['discord.ext'] = MagicMock()
-sys.modules['discord.app_commands'] = MagicMock()
-sys.modules['dotenv'] = MagicMock()
-sys.modules['google'] = MagicMock()
-sys.modules['google.generativeai'] = MagicMock()
-sys.modules['aiohttp'] = MagicMock()
+class TestAIManagerOptimization(unittest.IsolatedAsyncioTestCase):
+    async def test_generate_role_template_issuperset(self):
+        ai = AIManager()
+        # Mock generate_response to return a valid JSON array
+        ai.generate_response = AsyncMock(return_value='["狼人", "預言家", "平民"]')
 
-import bot
-from game_data import GAME_TEMPLATES, SUPPORTED_COUNTS
+        # This will trigger the code path with issuperset
+        existing_roles = ["狼人", "預言家", "平民"]
+        roles = await ai.generate_role_template(3, existing_roles)
 
-class TestTargetCountLogic(unittest.TestCase):
-    def test_supported_counts_sorted(self):
-        # Verify the constant is sorted correctly
-        expected = sorted(GAME_TEMPLATES.keys(), reverse=True)
-        self.assertEqual(SUPPORTED_COUNTS, expected)
+        self.assertEqual(roles, ["狼人", "預言家", "平民"])
 
-    def get_target_count(self, current_player_count):
-        # Mirroring the logic in bot.py
-        return next((count for count in SUPPORTED_COUNTS if current_player_count >= count), 6)
+        # Cache key uses sorted tuple of existing_roles
+        cache_key = (3, tuple(sorted(existing_roles)))
+        self.assertIn(cache_key, ai.role_template_cache)
 
-    def test_logic_exact_match(self):
-        self.assertEqual(self.get_target_count(6), 6)
-        self.assertEqual(self.get_target_count(12), 12)
-        self.assertEqual(self.get_target_count(8), 8)
-        self.assertEqual(self.get_target_count(7), 7)
+    async def test_generate_role_template_invalid_roles(self):
+        ai = AIManager()
+        # Mock generate_response to return roles not in existing_roles
+        ai.generate_response = AsyncMock(return_value='["狼人", "預言家", "隱身狼"]')
 
-    def test_logic_overflow(self):
-        self.assertEqual(self.get_target_count(11), 10)
-        self.assertEqual(self.get_target_count(15), 12)
+        roles = await ai.generate_role_template(3, ["狼人", "預言家", "平民"])
 
-    def test_logic_underflow(self):
-        self.assertEqual(self.get_target_count(5), 6)
-        self.assertEqual(self.get_target_count(3), 6)
+        # Should return empty list because "隱身狼" is not in existing_roles
+        self.assertEqual(roles, [])
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()
