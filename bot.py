@@ -541,11 +541,7 @@ async def perform_night(channel: discord.TextChannel, game: GameState):
 
         # 同守同救 (奶穿) 規則：如果同時被守和被救，視為無效，玩家死亡
         if is_guarded and is_saved:
-             pass # 這裡實作上若奶穿則兩者抵銷，玩家不死？ (通常規則是死，需確認規則。此處代碼邏輯為 pass -> 不加入 dead_ids -> 活著)
-             # 更正: 標準規則同守同救是"死"。若代碼意圖為不死，則為變體。
-             # 假設此處代碼意圖是：如果不守不救才死。那同守同救就是不死。
-             # 讓我們保持原樣，或者如果想改為標準規則 (奶穿死)，應該是 dead_ids.add(wolf_kill)
-             # 但目前邏輯： pass -> 沒事。
+            dead_ids.add(wolf_kill)
         elif not is_guarded and not is_saved:
             dead_ids.add(wolf_kill)
 
