@@ -50,8 +50,9 @@ def _get_default_font():
     except Exception:
         return ImageFont.load_default()
 
-def generate_number_image(number: int) -> io.BytesIO:
-    """動態生成一張帶有編號的圖片"""
+@lru_cache(maxsize=20)
+def _generate_number_image_bytes(number: int) -> bytes:
+    """生成帶有編號的圖片位元組並快取"""
     # 建立一張 500x500 的黑色背景圖片
     img_size = 500
     image = Image.new("RGB", (img_size, img_size), color=(30, 30, 30))
@@ -76,8 +77,12 @@ def generate_number_image(number: int) -> io.BytesIO:
     # 將圖片存入記憶體
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
-    buffer.seek(0)
-    return buffer
+    return buffer.getvalue()
+
+def generate_number_image(number: int) -> io.BytesIO:
+    """動態生成一張帶有編號的圖片（具備快取機制）"""
+    image_bytes = _generate_number_image_bytes(number)
+    return io.BytesIO(image_bytes)
 
 # 設定 Intent (權限)
 intents = discord.Intents.default()
