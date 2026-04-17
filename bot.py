@@ -2,13 +2,12 @@ import os
 import asyncio
 import logging
 import discord
-from collections import Counter, deque
+from collections import deque
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 from random import SystemRandom
-import random
-from typing import Optional, List, Dict, Union, Any, Callable
+from typing import Optional, List, Union, Callable
 import io
 from PIL import Image, ImageDraw, ImageFont
 from functools import lru_cache
