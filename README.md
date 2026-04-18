@@ -41,8 +41,11 @@ Bot 支援切換 AI 提供者，您可以選擇使用雲端的 **Google Gemini A
 
 | 變數名稱 | 說明 | 預設值 | 範例 |
 | :--- | :--- | :--- | :--- |
-| `AI_PROVIDER` | 選擇 AI 提供者 (`gemini-api` 或 `ollama`) | `gemini-api` | `ollama` |
+| `AI_PROVIDER` | 選擇 AI 提供者 (`gemini-api`, `ollama` 或 `litellm`) | `gemini-api` | `ollama`, `litellm` |
 | `GEMINI_API_KEY` | Google Gemini 的 API Key | 無 | `AIzaSy...` |
+| `LITELLM_API_KEY` | LiteLLM (OpenAI 相容) 的 API Key | 無 | `sk-...` |
+| `LITELLM_MODEL` | 使用的 LiteLLM 模型 | `gpt-3.5-turbo` | `gpt-4o` |
+| `LITELLM_BASE_URL`| LiteLLM API 基礎 URL | `https://litellm.lianghsun.dev` | `https://api.openai.com` |
 | `OLLAMA_MODEL` | Ollama 使用的模型名稱 | `gpt-oss:20b` | `llama3` |
 | `OLLAMA_HOST` | Ollama API 的連線位址 | `http://localhost:11434` | `http://192.168.1.10:11434` |
 
